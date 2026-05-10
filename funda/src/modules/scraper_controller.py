@@ -133,7 +133,12 @@ class ScraperStats:
             'ids_collected': self.ids_collected,
             'ids_queued': self.ids_queued,
             'duplicate_in_storage': self.duplicate_in_storage,
-            'duplicate_in_retry_queue': self.duplicate_in_retry_queue,
+            # `duplicate_in_retry_queue` is collector-internal noise (the same
+            # property re-encountered after a collection-browser crash; only
+            # queued once thanks to queued_ids dedup). It is NOT a real
+            # duplicate, so we always report 0 to the API to keep the dashboard
+            # 'Duplicate' counter equal to "matched KVK from prior sessions".
+            'duplicate_in_retry_queue': 0,
             'active_workers': self.active_workers,
             'excel_files_created': self.excel_files_created,
             'sheets_written': self.sheets_written,
@@ -733,9 +738,35 @@ class FundaController:
                             backoff = random.uniform(3, 8) * attempt
                             time.sleep(backoff)
                         else:
-                            with self._stats_lock:
-                                self.stats.properties_failed += 1
-                            self._update_stats()
+                            # All MAX_RETRIES attempts in this worker visit failed.
+                            # Don't lose the property — re-queue it for another
+                            # worker visit (potentially a different worker with a
+                            # fresh browser). Cap at MAX_WORKER_VISITS so we
+                            # eventually give up on genuinely-broken URLs (404,
+                            # de-listed, etc.).
+                            MAX_WORKER_VISITS = 3
+                            visit = prop_info.get('_visit', 1) + 1
+                            if visit <= MAX_WORKER_VISITS:
+                                prop_info['_visit'] = visit
+                                # small jitter so the property doesn't immediately
+                                # land back at the same worker
+                                time.sleep(random.uniform(2, 6))
+                                work_queue.put(prop_info)
+                                logger.warning(
+                                    f"  [W{worker_id}] All {config.MAX_RETRIES} attempts "
+                                    f"failed — re-queued for visit {visit}/{MAX_WORKER_VISITS}: "
+                                    f"{prop_info.get('id')}"
+                                )
+                            else:
+                                with self._stats_lock:
+                                    self.stats.properties_failed += 1
+                                self._update_stats()
+                                logger.error(
+                                    f"  [W{worker_id}] Gave up on property after "
+                                    f"{visit-1} worker visits × {config.MAX_RETRIES} "
+                                    f"attempts each = {(visit-1)*config.MAX_RETRIES} total tries: "
+                                    f"{prop_info.get('id')}"
+                                )
 
                 if success:
                     consecutive_fails = 0
