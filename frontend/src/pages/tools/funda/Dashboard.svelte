@@ -25,10 +25,6 @@
     active_workers: 0,
     excel_files_created: 0,
     sheets_written: 0,
-    valuations_written: 0,
-    valuations_failed: 0,
-    valuations_pending: 0,
-    valuations_fallback: 0,
     elapsed_seconds: 0,
     last_error: '',
     browser_restarts: 0,
@@ -335,7 +331,7 @@
       </div>
 
       <!-- Stats Grid -->
-      <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 sm:gap-4 mb-4 sm:mb-6">
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mb-4 sm:mb-6">
         <div class="bg-indigo-50 rounded-lg p-3 sm:p-4 text-center">
           <p class="text-xs text-indigo-600 mb-1">Collected</p>
           <p class="text-lg sm:text-2xl font-bold text-indigo-600">{status.ids_queued > 0 ? status.ids_queued.toLocaleString() : '—'}</p>
@@ -355,11 +351,6 @@
           <p class="text-xs text-blue-600 mb-1">Google Sheets</p>
           <p class="text-lg sm:text-2xl font-bold text-blue-600">{status.sheets_written}</p>
           <p class="text-xs text-blue-500">rows written</p>
-        </div>
-        <div class="bg-emerald-50 rounded-lg p-3 sm:p-4 text-center">
-          <p class="text-xs text-emerald-600 mb-1">Bidding Calculated</p>
-          <p class="text-lg sm:text-2xl font-bold text-emerald-600">{status.valuations_written}</p>
-          <p class="text-xs text-emerald-500">{status.valuations_pending > 0 ? `${status.valuations_pending} pending` : 'suggested bids'}</p>
         </div>
       </div>
 

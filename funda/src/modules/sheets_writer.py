@@ -487,6 +487,25 @@ class SheetsWriter:
             logger.error(f"  ✗ Valuation update failed [{ws.title} row {row_num}]: {e}")
             return False
 
+    def clear_all_data_rows(self) -> None:
+        """Wipe every data row (row 2 onwards) on every tab — keeps headers.
+        Called at the start of a fresh run so each run produces a clean sheet
+        with no carry-over from previous runs."""
+        self._connect()
+        for ws in self._spreadsheet.worksheets():
+            try:
+                rows = ws.row_count
+                cols = ws.col_count
+                if rows < 2:
+                    continue
+                last_col = gspread.utils.rowcol_to_a1(1, cols).rstrip('1')
+                ws.batch_clear([f"A2:{last_col}{rows}"])
+                logger.info(f"  Cleared data rows on tab: {ws.title}")
+            except Exception as e:
+                logger.warning(f"  Could not clear tab {ws.title}: {e}")
+        # In-memory URL sets are now stale — drop them so fresh writes work.
+        self._tab_urls.clear()
+
     def reformat_all_tabs(self) -> None:
         """Force re-apply formatting to every existing sheet tab."""
         self._connect()
