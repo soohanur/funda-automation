@@ -288,6 +288,7 @@ class PropertyCollector:
         self._last_page = start_page  # Track for resume on captcha
         consecutive_empty = 0
         past_range_count = 0
+        no_date_header_streak = 0   # detect broken date-header HTML
         max_pages = self._total_pages + 10
 
         # Navigate to start page
@@ -317,6 +318,28 @@ class PropertyCollector:
             # Extract date headers and properties from this page
             before_count = len(self.collected)
             page_date, new_count, date_status = self._extract_properties_with_dates()
+
+            # ── Guard: detect broken date-header HTML ──────────────
+            # If the page has properties but NO parseable date header, the
+            # date filter falls through to "in_range" (it can't tell), which
+            # would make the collector queue EVERY property on EVERY page —
+            # a runaway scrape. If this happens on several pages in a row,
+            # Funda has changed their date-header markup. Stop cleanly with
+            # a clear error instead of walking all ~1500 pages.
+            if date_status != 'empty' and page_date is None:
+                no_date_header_streak += 1
+                if no_date_header_streak >= 5:
+                    raise RuntimeError(
+                        f"Date-header parsing broke: 5 consecutive pages "
+                        f"({page_number-4}..{page_number}) had properties but "
+                        f"no parseable date header. Funda likely changed their "
+                        f"HTML — the date filter is no longer reliable. "
+                        f"Collection halted to avoid a runaway scrape. "
+                        f"Fix: update the date-header regex in "
+                        f"_extract_first_date_header / _extract_properties_with_dates."
+                    )
+            else:
+                no_date_header_streak = 0
 
             # Stream new properties to work queue (dedup against KVK + already-queued set)
             if output_queue is not None and new_count > 0:

@@ -87,6 +87,12 @@ class SheetsWriter:
         self._client: Optional[gspread.Client]       = None
         self._spreadsheet: Optional[gspread.Spreadsheet] = None
         self._formatted_sheets: Set[str] = set()   # track formatted tabs this session
+        # In-memory URL set per tab, seeded from the sheet on first use and
+        # updated after every append. Prevents writing a property twice — both
+        # within a session AND across sessions (e.g. when a prior run's write
+        # reported failure due to Google API eventual consistency but actually
+        # landed, so the property never got added to KVK and gets re-scraped).
+        self._tab_urls: dict = {}   # tab_name -> set(url)
 
     # ── Connection ────────────────────────────────────────────
 
@@ -124,6 +130,17 @@ class SheetsWriter:
         if tab_name not in self._formatted_sheets:
             self._apply_sheet_formatting(ws)
             self._formatted_sheets.add(tab_name)
+
+        # Seed the in-memory URL set from the sheet's Property URL column (B)
+        # the first time we touch this tab. Used for append-time dedup.
+        if tab_name not in self._tab_urls:
+            try:
+                col_b = ws.col_values(2)   # includes header
+                self._tab_urls[tab_name] = {v.strip() for v in col_b[1:] if v and v.strip()}
+                logger.info(f"  Seeded {len(self._tab_urls[tab_name])} known URLs for tab: {tab_name}")
+            except Exception as e:
+                logger.warning(f"  Could not seed URL set for {tab_name}: {e}")
+                self._tab_urls[tab_name] = set()
 
         return ws
 
@@ -288,10 +305,22 @@ class SheetsWriter:
         return config.PUBLICATION_DATE_TABS.get(publication_date, f'{publication_date} Days')
 
     def write_property(self, prop: dict, publication_date: int) -> bool:
-        """Write a single property row to the correct sheet tab."""
+        """Write a single property row to the correct sheet tab.
+
+        Dedup guard: if the property URL is already present in the tab (seeded
+        from the sheet on first use + tracked across this session), skip the
+        append and return True. Returning True is intentional — it makes the
+        controller treat the property as 'written' so it gets added to KVK
+        storage, closing the loop that previously could leave a stale dup.
+        """
         tab_name = self._get_tab_name(publication_date)
         try:
             ws = self._get_or_create_worksheet(tab_name)
+
+            url = (prop.get('url', '') or '').strip()
+            if url and url in self._tab_urls.get(tab_name, set()):
+                logger.info(f"  Sheets [{tab_name}]: URL already present — skipping duplicate: {url}")
+                return True
 
             images_joined = ', '.join(prop.get('photo_urls', []))
 
@@ -333,6 +362,9 @@ class SheetsWriter:
             ]
 
             ws.append_row(row, value_input_option='USER_ENTERED')
+            # Track the URL so we never append it again this session.
+            if url:
+                self._tab_urls.setdefault(tab_name, set()).add(url)
             logger.info(
                 f"  ✓ Sheets [{tab_name}]: {prop.get('address', prop.get('id', '?'))}"
             )

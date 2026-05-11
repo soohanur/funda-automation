@@ -224,34 +224,31 @@ class FundaController:
             # Update total KVK count
             self.stats.total_kvk_stored = self.kvk_storage.count()
             
-            # Overall progress — only meaningful AFTER collection has finished.
-            # While collection is still running, ids_queued grows continuously,
-            # so any progress % computed mid-collection will yo-yo (it can hit
-            # 100% briefly when scraping catches up to whatever has been queued
-            # so far, then drop back to 50% when 100 more ids are added).
-            #
-            # Two-phase model: each property has TWO units of work — the scrape
-            # itself, and the Walter valuation. Run is only "done" when both
-            # phases are done for every queued property.
+            # Overall progress — only meaningful AFTER collection has finished
+            # (ids_queued grows during collection, so a mid-collection % would
+            # yo-yo). Two-phase model:
+            #   - scrape phase  : every queued property → scraped OR filtered OR failed
+            #   - valuation phase: only properties that reach the sheet get valued
+            #     (filtered ones do NOT — so the valuation target is sheets_written,
+            #      not ids_queued. Using ids_queued*2 caps progress at <100% whenever
+            #      there are filtered properties — that was the old 87% bug.)
             if self.stats.collection_status == "done" and self.stats.ids_queued > 0:
                 scrape_done = (
                     self.stats.properties_scraped
                     + self.stats.properties_filtered
                     + self.stats.properties_failed
                 )
-                # valuation_pending properties are still in queue — count
-                # written + failed + fallback as "done" for valuation phase
                 valuation_done = (
                     self.stats.valuations_written
                     + self.stats.valuations_failed
                 )
-                total_work = self.stats.ids_queued * 2
+                # scrape target = all queued; valuation target = rows actually written
+                total_work = self.stats.ids_queued + max(1, self.stats.sheets_written)
                 done = scrape_done + valuation_done
                 self.stats.batch_progress = min(100, int(done / total_work * 100))
             else:
                 # While collecting, show 0% — the dashboard label already
-                # reads "Collecting page X" in this state, which is more
-                # honest than a misleading number.
+                # reads "Collecting page X" in this state.
                 self.stats.batch_progress = 0
             
             # Notify callback
