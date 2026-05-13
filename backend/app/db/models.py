@@ -172,6 +172,98 @@ class SystemMetrics(Base):
         return f"<SystemMetrics {self.timestamp}>"
 
 
+class Property(Base):
+    """
+    Scraped Funda property record. Mirror of the 33-column Google Sheet,
+    with a few CRM-friendly extras (email_status, notes, created/updated).
+    Google Sheets stays the canonical write target of the scraper; this table
+    is kept in sync (read-through + on-demand /properties/sync) so the
+    Next.js dashboard can filter/sort fast and we can join emails to it.
+    """
+    __tablename__ = "properties"
+
+    id = Column(Integer, primary_key=True, index=True)
+    url = Column(String, unique=True, index=True, nullable=False)
+
+    # Sheet columns (33).
+    scrape_date = Column(String)
+    address = Column(String, index=True)
+    listed_since = Column(String, index=True)
+    days_on_market = Column(String)
+    asking_price = Column(String)
+    woz_value = Column(String)
+    suggested_bid = Column(String)
+    bidding_price = Column(String)
+    price_per_m2 = Column(String)
+    living_area = Column(String)
+    plot_area = Column(String)
+    rooms = Column(String)
+    bedrooms = Column(String)
+    construction_year = Column(String)
+    property_type = Column(String, index=True)
+    energy_label = Column(String, index=True)
+    heating = Column(String)
+    insulation = Column(String)
+    maintenance_inside = Column(String)
+    maintenance_outside = Column(String)
+    garden = Column(String)
+    garden_orientation = Column(String)
+    parking = Column(String)
+    vve = Column(String)
+    erfpacht = Column(String)
+    acceptance = Column(String)
+    description = Column(Text)
+    images = Column(Text)  # comma-separated URLs
+    agency_name = Column(String, index=True)
+    agency_phone = Column(String)
+    agency_email = Column(String, index=True)
+    agency_website = Column(String)
+
+    # CRM extras.
+    email_status = Column(String, default="not_sent", index=True)
+    notes = Column(Text)
+
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_synced_at = Column(DateTime)
+
+    # Relationship to emails.
+    emails = relationship("EmailMessage", back_populates="property", cascade="all, delete-orphan")
+
+    def __repr__(self):
+        return f"<Property {self.address}>"
+
+
+class EmailMessage(Base):
+    """
+    Email sent (or queued) to a property's agency. Dual storage: also mirrored
+    into a Google Sheet tab by sheets_writer (Phase 4).
+    """
+    __tablename__ = "email_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    property_id = Column(Integer, ForeignKey("properties.id"), nullable=True, index=True)
+    property_url = Column(String, index=True)  # denormalized for safety
+
+    to_email = Column(String, index=True, nullable=False)
+    cc_emails = Column(String)
+    subject = Column(String, nullable=False)
+    body = Column(Text)
+    attachment_path = Column(String)
+
+    status = Column(String, default="queued", index=True)  # queued|sent|failed
+    error_message = Column(Text)
+
+    sent_at = Column(DateTime, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    property = relationship("Property", back_populates="emails")
+
+    def __repr__(self):
+        return f"<EmailMessage to={self.to_email} status={self.status}>"
+
+
 class ToolConfig(Base):
     """Tool-specific configuration presets."""
     __tablename__ = "tool_configs"
