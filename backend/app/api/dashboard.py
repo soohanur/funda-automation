@@ -30,6 +30,13 @@ class LatestProperty(BaseModel):
     property_type: Optional[str] = None
     energy_label: Optional[str] = None
     agency_name: Optional[str] = None
+    agency_email: Optional[str] = None
+    woz_value: Optional[str] = None
+    bidding_price: Optional[str] = None
+    days_on_market: Optional[str] = None
+    living_area: Optional[str] = None
+    rooms: Optional[str] = None
+    sheet_tab: Optional[str] = None
     email_status: Optional[str] = None
     scrape_date: Optional[str] = None
     created_at: Optional[datetime] = None

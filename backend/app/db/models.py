@@ -219,6 +219,10 @@ class Property(Base):
     agency_email = Column(String, index=True)
     agency_website = Column(String)
 
+    # Source sheet tab the row originated from (e.g. '3-7 Days Ago').
+    # Lets the dashboard filter by Funda publication-date bucket.
+    sheet_tab = Column(String, index=True)
+
     # CRM extras.
     email_status = Column(String, default="not_sent", index=True)
     notes = Column(Text)

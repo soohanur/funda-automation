@@ -126,8 +126,11 @@ async def sync_properties(db: AsyncSession) -> Dict[str, int]:
 
     for row in rows:
         url = row["url"]
+        sheet_tab = row.get("_sheet")
         payload = {k: v for k, v in row.items() if k != "_sheet" and k != "url" and v != ""}
         payload["last_synced_at"] = now
+        if sheet_tab:
+            payload["sheet_tab"] = sheet_tab
         if url in existing:
             pid = existing[url]
             # Update — only non-empty fields, never overwrite with blank.

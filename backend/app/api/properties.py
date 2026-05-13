@@ -60,6 +60,7 @@ class PropertyOut(BaseModel):
     agency_phone: Optional[str] = None
     agency_email: Optional[str] = None
     agency_website: Optional[str] = None
+    sheet_tab: Optional[str] = None
     email_status: Optional[str] = "not_sent"
     notes: Optional[str] = None
     created_at: Optional[datetime] = None
@@ -109,7 +110,8 @@ _SORT_FIELDS = {
 
 def _apply_filters(stmt, *, q: Optional[str], email_status: Optional[str],
                    property_type: Optional[str], energy_label: Optional[str],
-                   agency_name: Optional[str], days_back: Optional[int]):
+                   agency_name: Optional[str], days_back: Optional[int],
+                   sheet_tab: Optional[str]):
     if q:
         like = f"%{q}%"
         stmt = stmt.where(
@@ -132,6 +134,8 @@ def _apply_filters(stmt, *, q: Optional[str], email_status: Optional[str],
     if days_back is not None and days_back > 0:
         cutoff = datetime.utcnow() - timedelta(days=days_back)
         stmt = stmt.where(Property.created_at >= cutoff)
+    if sheet_tab:
+        stmt = stmt.where(Property.sheet_tab == sheet_tab)
     return stmt
 
 
@@ -146,6 +150,7 @@ async def list_properties(
     energy_label: Optional[str] = Query(None),
     agency_name: Optional[str] = Query(None),
     days_back: Optional[int] = Query(None, ge=1, le=3650),
+    sheet_tab: Optional[str] = Query(None),
     sort: str = Query("created_at"),
     order: str = Query("asc", pattern="^(asc|desc)$"),
     limit: int = Query(100, ge=1, le=1000),
@@ -159,6 +164,7 @@ async def list_properties(
         select(Property),
         q=q, email_status=email_status, property_type=property_type,
         energy_label=energy_label, agency_name=agency_name, days_back=days_back,
+        sheet_tab=sheet_tab,
     )
 
     # Count.
@@ -166,6 +172,7 @@ async def list_properties(
         select(func.count(Property.id)),
         q=q, email_status=email_status, property_type=property_type,
         energy_label=energy_label, agency_name=agency_name, days_back=days_back,
+        sheet_tab=sheet_tab,
     )
     total = (await db.execute(count_stmt)).scalar_one()
 
@@ -191,6 +198,7 @@ async def get_filter_options(db: AsyncSession = Depends(get_db)) -> Dict[str, An
         "energy_label": await distinct(Property.energy_label),
         "agency_name": await distinct(Property.agency_name),
         "email_status": await distinct(Property.email_status),
+        "sheet_tab": await distinct(Property.sheet_tab),
     }
 
 

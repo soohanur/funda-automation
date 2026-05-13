@@ -39,6 +39,7 @@ export type Property = {
   agency_phone?: string | null;
   agency_email?: string | null;
   agency_website?: string | null;
+  sheet_tab?: string | null;
   email_status?: string | null;
   notes?: string | null;
   created_at?: string | null;
@@ -60,6 +61,7 @@ export type ListParams = {
   energy_label?: string;
   agency_name?: string;
   days_back?: number;
+  sheet_tab?: string;
   sort?: string;
   order?: "asc" | "desc";
   limit?: number;
@@ -71,6 +73,7 @@ export type FilterOptions = {
   energy_label: string[];
   agency_name: string[];
   email_status: string[];
+  sheet_tab: string[];
 };
 
 export const propertiesApi = {

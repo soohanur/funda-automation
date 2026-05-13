@@ -9,13 +9,13 @@ import {
   Database,
   Mail,
   Send,
-  Calendar,
   AlertCircle,
   TrendingUp,
 } from "lucide-react";
-import { dashboardApi, type LatestProperty } from "@/lib/api/dashboard";
+import { dashboardApi } from "@/lib/api/dashboard";
 import { PageContainer } from "@/components/page-container";
-import { cn, formatDate, formatNumber } from "@/lib/utils";
+import { PropertiesTable } from "@/components/properties-table";
+import { cn, formatNumber } from "@/lib/utils";
 
 export default function DashboardPage() {
   const { data, isLoading } = useQuery({
@@ -26,7 +26,6 @@ export default function DashboardPage() {
 
   return (
     <PageContainer>
-      {/* Top stat grid — every card is a Link to the relevant page (spec). */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <StatCard
           href="/emails"
@@ -70,90 +69,38 @@ export default function DashboardPage() {
         />
       </div>
 
-      {/* Sub-stat row */}
       <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
         <MiniCard label="Email queued" value={data?.emails_queued ?? 0} icon={<Clock className="h-4 w-4" />} />
         <MiniCard label="Email failed" value={data?.emails_failed ?? 0} icon={<AlertCircle className="h-4 w-4" />} />
         <MiniCard label="Total emails" value={data?.total_emails ?? 0} icon={<Mail className="h-4 w-4" />} />
       </div>
 
-      {/* Latest scrapes */}
-      <div className="card mt-6 overflow-hidden">
-        <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-4">
-          <div>
-            <h3 className="text-sm font-semibold">Latest scrapes</h3>
-            <p className="text-xs text-[var(--muted-foreground)]">Newest 10 properties</p>
-          </div>
-          <Link href="/data" className="btn-ghost text-xs">
-            View all
-            <ArrowRight className="h-3.5 w-3.5" />
-          </Link>
+      <div className="mt-6 mb-2 flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-semibold">Latest scrapes</h3>
+          <p className="text-xs text-[var(--muted-foreground)]">Newest 10 properties (same view as Global Data)</p>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-[var(--border)] bg-[var(--surface-2)]">
-                <Th>Scraped</Th>
-                <Th>Address</Th>
-                <Th>Asking</Th>
-                <Th>Suggested</Th>
-                <Th>Type</Th>
-                <Th>Energy</Th>
-                <Th>Agency</Th>
-                <Th>Status</Th>
-                <Th />
-              </tr>
-            </thead>
-            <tbody>
-              {(data?.latest_scrapes ?? []).length === 0 && !isLoading && (
-                <tr>
-                  <td colSpan={9} className="p-10 text-center text-sm text-[var(--muted-foreground)]">
-                    No scrapes yet. Start the <Link href="/scraper" className="text-[var(--color-brand-600)] underline">Funda Scraper</Link>.
-                  </td>
-                </tr>
-              )}
-              {(data?.latest_scrapes ?? []).map((p, idx) => (
-                <PropertyRow key={p.id} p={p} idx={idx} />
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </PageContainer>
-  );
-}
-
-function PropertyRow({ p, idx }: { p: LatestProperty; idx: number }) {
-  return (
-    <tr
-      className={cn(
-        "border-b border-[var(--border)] hover:bg-[var(--muted)]",
-        idx % 2 === 1 && "bg-[var(--surface-2)]"
-      )}
-    >
-      <Td>
-        <span className="inline-flex items-center gap-1 text-xs text-[var(--muted-foreground)]">
-          <Calendar className="h-3 w-3" />
-          {p.scrape_date ?? formatDate(p.created_at)}
-        </span>
-      </Td>
-      <Td>
-        <span className="font-medium">{p.address ?? p.url}</span>
-      </Td>
-      <Td>{p.asking_price ?? "—"}</Td>
-      <Td className="font-semibold text-[var(--color-brand-700)]">{p.suggested_bid ?? "—"}</Td>
-      <Td>{p.property_type ?? "—"}</Td>
-      <Td>{p.energy_label ?? "—"}</Td>
-      <Td>{p.agency_name ?? "—"}</Td>
-      <Td>
-        <StatusChip status={p.email_status ?? "not_sent"} />
-      </Td>
-      <Td className="text-right">
-        <Link href={`/data/${p.id}`} className="text-xs text-[var(--color-brand-600)] hover:underline">
-          Open
+        <Link href="/data" className="btn-ghost text-xs">
+          View all
+          <ArrowRight className="h-3.5 w-3.5" />
         </Link>
-      </Td>
-    </tr>
+      </div>
+
+      <PropertiesTable
+        items={data?.latest_scrapes ?? []}
+        isLoading={isLoading}
+        emptyMessage={
+          <>
+            No scrapes yet. Start the{" "}
+            <Link href="/scraper" className="text-[var(--color-brand-600)] underline">
+              Funda Scraper
+            </Link>
+            .
+          </>
+        }
+        maxHeightClass="max-h-[calc(100vh-360px)]"
+      />
+    </PageContainer>
   );
 }
 
@@ -208,32 +155,5 @@ function MiniCard({ label, value, icon }: { label: string; value: number; icon: 
         {icon}
       </div>
     </div>
-  );
-}
-
-function Th({ children }: { children?: React.ReactNode }) {
-  return (
-    <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
-      {children}
-    </th>
-  );
-}
-function Td({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <td className={cn("px-3 py-2.5", className)}>{children}</td>;
-}
-
-function StatusChip({ status }: { status: string }) {
-  const tone =
-    status === "sent"
-      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-      : status === "failed"
-      ? "bg-rose-50 text-rose-700 border-rose-200"
-      : status === "queued"
-      ? "bg-amber-50 text-amber-700 border-amber-200"
-      : "bg-[var(--muted)] text-[var(--muted-foreground)] border-[var(--border)]";
-  return (
-    <span className={cn("inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium", tone)}>
-      {status}
-    </span>
   );
 }

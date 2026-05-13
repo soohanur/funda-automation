@@ -9,6 +9,13 @@ export type LatestProperty = {
   property_type?: string | null;
   energy_label?: string | null;
   agency_name?: string | null;
+  agency_email?: string | null;
+  woz_value?: string | null;
+  bidding_price?: string | null;
+  days_on_market?: string | null;
+  living_area?: string | null;
+  rooms?: string | null;
+  sheet_tab?: string | null;
   email_status?: string | null;
   scrape_date?: string | null;
   created_at?: string | null;
