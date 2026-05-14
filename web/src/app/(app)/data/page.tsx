@@ -14,8 +14,9 @@ import { EmailModal } from "@/components/email-modal";
 import { PropertiesTable } from "@/components/properties-table";
 import { formatNumber } from "@/lib/utils";
 
-// No pagination — single scrollable list. Backend cap is 1000.
-const LIST_LIMIT = 1000;
+// No pagination — single scrollable list. Backend cap is 100k; pulling
+// every row in one shot is fine because the table is fully virtualized.
+const LIST_LIMIT = 100000;
 
 // Sheet tab dropdown is fixed — always all five buckets, regardless of
 // whether the DB has rows for each one yet.

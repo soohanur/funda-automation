@@ -153,7 +153,10 @@ async def list_properties(
     sheet_tab: Optional[str] = Query(None),
     sort: str = Query("created_at"),
     order: str = Query("asc", pattern="^(asc|desc)$"),
-    limit: int = Query(100, ge=1, le=1000),
+    # Cap raised so the dashboard table can render every row in one
+    # virtualized list. 100k is well above any realistic NL listing total
+    # (~55k), still bounded so a typo can't ask for the whole world.
+    limit: int = Query(100, ge=1, le=100000),
     offset: int = Query(0, ge=0),
 ):
     """List properties (DB-backed). Use POST /properties/sync to refresh from Sheet."""
