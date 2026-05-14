@@ -94,9 +94,43 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"⚠ Funda auto-resume check failed: {e}")
 
+    # ── Background Sheet → DB sync ─────────────────────────────────
+    # Scraper writes to Google Sheets only; the dashboard reads the DB.
+    # Without this loop the dashboard would only refresh when a user
+    # clicked Sync from Sheet on Global Data. We pull every 30s while
+    # idle / actively scraping so the Latest Scrapes panel reflects the
+    # live sheet within the next dashboard poll (~15s frontend refetch).
+    import asyncio as _asyncio
+    from .db.database import AsyncSessionLocal
+    from .services.sheet_sync import sync_properties
+
+    async def _auto_sync_loop():
+        await _asyncio.sleep(15)  # let startup settle
+        while True:
+            try:
+                async with AsyncSessionLocal() as session:
+                    result = await sync_properties(session)
+                if result.get("inserted") or result.get("updated"):
+                    logger.info(
+                        f"Auto-sync: +{result['inserted']} new, "
+                        f"~{result['updated']} updated "
+                        f"({result['total_rows']} rows seen)"
+                    )
+            except Exception as e:
+                logger.warning(f"Auto-sync iteration failed: {e}")
+            await _asyncio.sleep(30)
+
+    auto_sync_task = _asyncio.create_task(_auto_sync_loop())
+    logger.info("✓ Background Sheet→DB auto-sync started (30s interval)")
+
     yield
-    
+
     # Shutdown
+    auto_sync_task.cancel()
+    try:
+        await auto_sync_task
+    except (_asyncio.CancelledError, Exception):
+        pass
     logger.info("Shutting down Automation Platform API...")
     await close_db()
     logger.info("✓ Cleanup complete")
