@@ -39,7 +39,7 @@ class DashboardStats(BaseModel):
 @router.get("/stats", response_model=DashboardStats)
 async def get_dashboard_stats(
     db: AsyncSession = Depends(get_db),
-    latest_limit: int = 10,
+    latest_limit: int = 50,
 ) -> DashboardStats:
     now = datetime.utcnow()
     day_cutoff = now.replace(hour=0, minute=0, second=0, microsecond=0)
