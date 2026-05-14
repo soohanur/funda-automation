@@ -58,8 +58,12 @@ export default function DataPage() {
   const { data, isLoading, isFetching } = useQuery({
     queryKey: ["properties", "list", params],
     queryFn: () => propertiesApi.list(params),
+    // Keep prior page on screen during refetch / filter change — no
+    // unmount, no full re-render of 1000 rows.
     placeholderData: (prev) => prev,
-    refetchInterval: 10_000,
+    // Backend auto-syncs Sheet→DB every 30s; faster polling burns DOM
+    // updates without ever showing fresher data.
+    refetchInterval: 30_000,
     refetchIntervalInBackground: false,
   });
 
