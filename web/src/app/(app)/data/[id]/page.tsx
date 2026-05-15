@@ -56,7 +56,7 @@ export default function PropertyProfilePage({
     queryKey: ["properties", "detail", numericId],
     queryFn: () => propertiesApi.get(numericId),
     enabled: Number.isFinite(numericId),
-    refetchInterval: 15_000,
+    refetchInterval: 30_000,
   });
 
   // Sync bidding baseline from backend (without nuking user's in-flight typing).

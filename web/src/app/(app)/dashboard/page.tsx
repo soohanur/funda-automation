@@ -21,7 +21,9 @@ export default function DashboardPage() {
   const { data, isLoading } = useQuery({
     queryKey: ["dashboard", "stats"],
     queryFn: dashboardApi.stats,
-    refetchInterval: 15_000,
+    // Backend auto-syncs Sheet→DB every 30s; faster polling can't show
+    // fresher data, just churns re-renders.
+    refetchInterval: 30_000,
   });
 
   return (

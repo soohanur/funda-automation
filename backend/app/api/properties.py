@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -210,8 +210,18 @@ async def list_properties(
 
 
 @router.get("/filters")
-async def get_filter_options(db: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
-    """Distinct values for the dashboard's filter dropdowns."""
+async def get_filter_options(
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """Distinct values for the dashboard's filter dropdowns.
+
+    Cache for 5 minutes — distinct sets shift only when new property
+    types / agencies appear, which happens rarely. Browser + any
+    intermediate proxy can serve the cached payload in microseconds.
+    """
+    response.headers["Cache-Control"] = "public, max-age=300"
+
     async def distinct(col):
         r = await db.execute(select(col).distinct().where(col.is_not(None)))
         return sorted({(v or "").strip() for (v,) in r.all() if v and v.strip()})

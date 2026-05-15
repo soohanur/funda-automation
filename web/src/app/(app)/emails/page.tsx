@@ -27,13 +27,13 @@ export default function EmailsPage() {
   const { data: stats } = useQuery({
     queryKey: ["emails", "stats"],
     queryFn: emailsApi.stats,
-    refetchInterval: 10_000,
+    refetchInterval: 30_000,
   });
 
   const { data: list, isLoading } = useQuery({
     queryKey: ["emails", "list", statusFilter],
     queryFn: () => emailsApi.list({ status: statusFilter || undefined, limit: 100 }),
-    refetchInterval: 10_000,
+    refetchInterval: 30_000,
   });
 
   const items = list?.items ?? [];
