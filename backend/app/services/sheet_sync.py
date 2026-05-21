@@ -82,7 +82,13 @@ def _open_spreadsheet() -> gspread.Spreadsheet:
 
 
 def fetch_sheet_rows() -> List[Dict[str, Any]]:
-    """Pull every data row from every worksheet and return as dicts."""
+    """Pull every data row from every worksheet and return as dicts.
+
+    Each row dict carries '_sheet' (worksheet title) AND '_row_index'
+    (1-based row number on that sheet, where header is row 1). The
+    row index lets sync_properties batch-write formulas to col I
+    without a second find_row_by_url roundtrip.
+    """
     ss = _open_spreadsheet()
     out: List[Dict[str, Any]] = []
     for ws in ss.worksheets():
@@ -94,7 +100,7 @@ def fetch_sheet_rows() -> List[Dict[str, Any]]:
         if not values:
             continue
         header_row = [h.strip() for h in values[0]]
-        for raw in values[1:]:
+        for r_idx, raw in enumerate(values[1:], start=2):
             if not any(c.strip() for c in raw):
                 continue  # blank
             row = {
@@ -106,6 +112,7 @@ def fetch_sheet_rows() -> List[Dict[str, Any]]:
             if not url:
                 continue
             row["_sheet"] = ws.title
+            row["_row_index"] = r_idx
             out.append(row)
     return out
 
@@ -132,16 +139,53 @@ def _default_bidding_from_asking(asking_price: Optional[str]) -> Optional[str]:
     return str(int(round(asking_int * 0.75)))
 
 
-def _mirror_bidding_to_sheet_safe(url: str, bidding_price: str) -> None:
-    """Best-effort write of the bidding price to Sheet col I. Runs in a
-    background thread so the sync's HTTP response isn't blocked on
-    Google. Failures are logged + swallowed — DB is the source of truth."""
+def _batch_write_formulas_safe(
+    tab_to_updates: Dict[str, List[Tuple[int, str]]],
+) -> None:
+    """Write Bidding Price formulas to Sheet col I in batches — ONE
+    API call per worksheet — so a long backfill never blows the
+    60 writes/min quota.
+
+    Input: {tab_name: [(row_index, formula), ...], ...}
+
+    Runs in a background thread so the sync's HTTP response isn't
+    blocked on Google. Failures are logged and swallowed; DB is the
+    source of truth.
+    """
+    if not tab_to_updates:
+        return
     try:
         from funda.src.modules import SheetsWriter
         writer = SheetsWriter()
-        writer.update_bidding_price(url, bidding_price)
+        writer._connect()
+        for tab_name, items in tab_to_updates.items():
+            if not items:
+                continue
+            try:
+                ws = writer._spreadsheet.worksheet(tab_name)
+            except Exception as e:
+                logger.warning(f"sheet-batch: worksheet {tab_name} missing: {e}")
+                continue
+            # Chunk to keep payloads under the 100-cell rule of thumb
+            # and avoid 429 on a single huge call.
+            CHUNK = 100
+            for start in range(0, len(items), CHUNK):
+                slice_ = items[start:start + CHUNK]
+                requests = [
+                    {"range": f"I{row_idx}", "values": [[formula]]}
+                    for row_idx, formula in slice_
+                ]
+                ok = writer._batch_update_with_backoff(
+                    ws,
+                    requests,
+                    label=f"Bidding-formula batch [{tab_name}] {len(requests)}",
+                )
+                if ok:
+                    logger.info(
+                        f"  ✓ Bidding formula batch [{tab_name}]: {len(requests)} cells"
+                    )
     except Exception as e:
-        logger.warning(f"Auto-bidding sheet mirror failed for {url}: {e}")
+        logger.warning(f"sheet-batch formula write failed: {e}")
 
 
 async def sync_properties(db: AsyncSession) -> Dict[str, int]:
@@ -166,26 +210,48 @@ async def sync_properties(db: AsyncSession) -> Dict[str, int]:
     existing_q = await db.execute(select(Property.id, Property.url))
     existing = {url: pid for pid, url in existing_q.all()}
 
-    # Track URL → default bidding to write back to the sheet AFTER the
-    # DB commit succeeds. Decouples DB persistence from the slower
-    # Google API roundtrip.
-    pending_sheet_writes: List[Tuple[str, str]] = []
+    # Per-tab list of (row_index, formula) cells to write back to Sheet
+    # col I. We already have the row index from fetch_sheet_rows so a
+    # single batch_update per tab fills every blank cell — no
+    # find_row_by_url roundtrips, ~3 API calls per sync iteration
+    # instead of hundreds.
+    pending_formula_writes: Dict[str, List[Tuple[int, str]]] = {}
+
+    # Asking column letter for the formula. F = 6th column = Asking
+    # Price (€). Keep this aligned with the COLUMNS constant in
+    # funda/src/modules/sheets_writer.py.
+    _ASK_COL = "F"
 
     for row in rows:
         url = row["url"]
         sheet_tab = row.get("_sheet")
-        payload = {k: v for k, v in row.items() if k != "_sheet" and k != "url" and v != ""}
+        row_index = row.get("_row_index")
+        payload = {
+            k: v
+            for k, v in row.items()
+            if k not in ("_sheet", "_row_index", "url") and v != ""
+        }
         payload["last_synced_at"] = now
         if sheet_tab:
             payload["sheet_tab"] = sheet_tab
 
-        # Auto-fill bidding price when the sheet leaves it empty but
-        # asking is set. Only triggers when the SHEET value is empty —
-        # the dict we just built only contains non-empty cells, so the
-        # absence of 'bidding_price' here means the sheet cell was blank.
+        # The Sheet now holds the 25%-off math as a per-row formula
+        # (=IF(F<r>="","",ROUND(F<r>*0.75))). Whenever the Sheet cell
+        # is blank — which happens on freshly-scraped rows that haven't
+        # been formula-written yet — we enqueue a one-cell formula
+        # write. DB just receives whatever value the Sheet evaluates
+        # the formula to (already in payload when the formula is in
+        # place). User PATCH still overrides with a static value.
         sheet_bidding_blank = "bidding_price" not in payload
-        asking_for_default = payload.get("asking_price")
-        default_bid = _default_bidding_from_asking(asking_for_default) if sheet_bidding_blank else None
+        asking_present = bool(payload.get("asking_price"))
+
+        def _queue_formula_write():
+            if not (sheet_tab and row_index and asking_present and sheet_bidding_blank):
+                return
+            formula = (
+                f'=IF({_ASK_COL}{row_index}="","",ROUND({_ASK_COL}{row_index}*0.75))'
+            )
+            pending_formula_writes.setdefault(sheet_tab, []).append((row_index, formula))
 
         if url in existing:
             pid = existing[url]
@@ -194,62 +260,32 @@ async def sync_properties(db: AsyncSession) -> Dict[str, int]:
                 continue
             for k, v in payload.items():
                 setattr(obj, k, v)
-            # Update DB bidding when blank (sheet blank → DB blank should
-            # mirror; sheet blank + DB has value means user edit, leave
-            # DB alone). And enqueue a Sheet write whenever the SHEET
-            # column itself is blank — regardless of DB state — so a
-            # prior failed write doesn't permanently leave the sheet
-            # row empty.
-            if default_bid:
-                if not (obj.bidding_price and obj.bidding_price.strip()):
-                    obj.bidding_price = default_bid
-                pending_sheet_writes.append((url, default_bid))
+            if sheet_bidding_blank and asking_present:
+                _queue_formula_write()
                 bidding_filled += 1
             updated += 1
         else:
-            if default_bid:
-                payload["bidding_price"] = default_bid
-                pending_sheet_writes.append((url, default_bid))
-                bidding_filled += 1
             obj = Property(url=url, **payload)
             db.add(obj)
+            if sheet_bidding_blank and asking_present:
+                _queue_formula_write()
+                bidding_filled += 1
             inserted += 1
 
     await db.commit()
 
-    # Fire Sheet write-backs in background threads. Each call goes
-    # through SheetsWriter's existing 4-attempt backoff so we don't
-    # blast Google with a thundering herd; we still pace ourselves at
-    # the caller level by spacing the dispatches across a thread pool
-    # with limited concurrency.
-    if pending_sheet_writes:
+    # Batch write all formulas in ONE thread (per-tab batch_update).
+    # No find_row_by_url reads — we already know each row's index from
+    # the sheet iter above. Typical sync iteration = up to 6 API
+    # writes total (one batch per tab), well under the 60/min cap.
+    if pending_formula_writes:
         import threading
-        import queue
-        import time as _time
-
-        q: "queue.Queue[Tuple[str, str]]" = queue.Queue()
-        for item in pending_sheet_writes:
-            q.put(item)
-
-        WORKER_COUNT = 2  # 2 concurrent writes ~= 30/min, safe under the 60/min cap
-        SLEEP_BETWEEN = 1.0  # extra spacing inside each worker
-
-        def worker():
-            while True:
-                try:
-                    url, bid = q.get_nowait()
-                except queue.Empty:
-                    return
-                try:
-                    _mirror_bidding_to_sheet_safe(url, bid)
-                except Exception as e:
-                    logger.warning(f"sheet-write worker error: {e}")
-                finally:
-                    q.task_done()
-                _time.sleep(SLEEP_BETWEEN)
-
-        for _ in range(WORKER_COUNT):
-            threading.Thread(target=worker, daemon=True, name="bid-mirror").start()
+        threading.Thread(
+            target=_batch_write_formulas_safe,
+            args=(pending_formula_writes,),
+            daemon=True,
+            name="bid-formula-batch",
+        ).start()
 
     return {
         "inserted": inserted,

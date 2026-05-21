@@ -569,8 +569,8 @@ class SheetsWriter:
     def update_bidding_price(self, url: str, bidding_price: str) -> bool:
         """Write the human-entered Bidding Price (col I) for the row matching `url`.
 
-        Isolated from the scraper's valuation flow — this is only ever called
-        from the CRM dashboard when a user edits a property's bidding price.
+        Isolated from the scraper's valuation flow — only called when a
+        user edits a property's bidding price from the dashboard.
         Returns True on success, False if the URL is not present yet.
         """
         loc = self.find_row_by_url(url)
@@ -588,6 +588,34 @@ class SheetsWriter:
         )
         if ok:
             logger.info(f"  ✓ Bidding price written [{ws.title} row {row_num}]: {bidding_price}")
+        return ok
+
+    def update_bidding_formula(self, url: str) -> bool:
+        """Write a per-row 25%-off formula to col I for the row matching `url`.
+
+        Used by sheet_sync on freshly-scraped rows so the spreadsheet
+        does the math (zero CPU + zero per-row API quota on our side
+        — single batch call writes one cell of formula text).
+
+        =IF(F{row}="", "", ROUND(F{row}*0.75))
+        """
+        loc = self.find_row_by_url(url)
+        if loc is None:
+            logger.warning(f"  ✗ Bidding formula back-write: URL not found: {url}")
+            return False
+        ws, row_num = loc
+        ask_col = 'F'  # Asking Price (€) is the 6th column.
+        formula = f'=IF({ask_col}{row_num}="","",ROUND({ask_col}{row_num}*0.75))'
+        ok = self._batch_update_with_backoff(
+            ws,
+            [{
+                'range': f'{self._VAL_COL_BIDDING}{row_num}',
+                'values': [[formula]],
+            }],
+            label=f"Bidding-formula [{ws.title} row {row_num}]",
+        )
+        if ok:
+            logger.info(f"  ✓ Bidding formula written [{ws.title} row {row_num}]: {url}")
         return ok
 
     def _batch_update_with_backoff(self, ws, requests: list, label: str) -> bool:
