@@ -194,11 +194,15 @@ async def sync_properties(db: AsyncSession) -> Dict[str, int]:
                 continue
             for k, v in payload.items():
                 setattr(obj, k, v)
-            # Backfill bidding on existing rows whose DB bidding is
-            # blank too (mirrors a fresh-state row that was synced
-            # before this feature shipped).
-            if default_bid and not (obj.bidding_price and obj.bidding_price.strip()):
-                obj.bidding_price = default_bid
+            # Update DB bidding when blank (sheet blank → DB blank should
+            # mirror; sheet blank + DB has value means user edit, leave
+            # DB alone). And enqueue a Sheet write whenever the SHEET
+            # column itself is blank — regardless of DB state — so a
+            # prior failed write doesn't permanently leave the sheet
+            # row empty.
+            if default_bid:
+                if not (obj.bidding_price and obj.bidding_price.strip()):
+                    obj.bidding_price = default_bid
                 pending_sheet_writes.append((url, default_bid))
                 bidding_filled += 1
             updated += 1
