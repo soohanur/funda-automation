@@ -15,7 +15,7 @@ export const COLUMNS: ColumnDef[] = [
   { key: "asking_price", label: "Asking", sortable: true, width: "110px" },
   { key: "woz_value", label: "WOZ", sortable: true, width: "110px" },
   { key: "suggested_bid", label: "AI Suggested", sortable: true, width: "130px" },
-  { key: "bidding_price", label: "Bidding (edit)", width: "150px" },
+  { key: "bidding_price", label: "Bidding Price", width: "150px" },
   { key: "images", label: "Images", width: "140px" },
   { key: "price_per_m2", label: "€/m²", width: "110px" },
   { key: "living_area", label: "m²", width: "70px" },
