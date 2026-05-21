@@ -166,7 +166,7 @@ export default function DataPage() {
   const isCustomDom = DOM_PRESETS[domPresetIdx].label === "Custom";
 
   return (
-    <PageContainer fill>
+    <PageContainer>
       <div className="card mb-4 flex shrink-0 flex-wrap items-center gap-3 p-4">
         <div className="min-w-[260px] flex-1">
           <input

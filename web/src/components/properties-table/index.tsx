@@ -1,22 +1,23 @@
 "use client";
 
 /**
- * PropertiesTable — virtualized data table shared by Global Data and
- * the Dashboard's Latest Scrapes panel. Designed for 100k+ rows by
- * combining:
+ * PropertiesTable — responsive data table.
  *
- *   - CSS grid layout (consistent column widths header ↔ body)
- *   - @tanstack/react-virtual (only ~30 rows in the DOM at a time)
- *   - React.memo + stable handlers (rows skip re-renders on parent state)
- *   - Optional infinite-scroll callback (paginated fetch on scroll)
+ *   Desktop (md+): virtualised via @tanstack/react-virtual, internal
+ *     scroll surface, sticky header + sticky right action column.
+ *     Built for 100k+ rows with constant DOM cost.
  *
- * The column set, row component, and individual cell variants live in
- * sibling files for readability.
+ *   Mobile (<md):  no internal scroll, no virtualiser. The whole card
+ *     grows naturally and the page (PageContainer overflow-y-auto)
+ *     owns the scroll surface, matching Dashboard / Scraper / Emails
+ *     UX. Infinite scroll still loads 30 rows per page so DOM is
+ *     bounded by what the user actually scrolls into view.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDown, ArrowUp, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useMediaQuery } from "@/lib/use-media-query";
 
 import { COLUMNS, GRID_TEMPLATE, ROW_HEIGHT, TOTAL_GRID_WIDTH } from "./columns";
 import { Row } from "./row";
@@ -34,52 +35,14 @@ type PropertiesTableProps = {
   onSort?: (key: string) => void;
   onEmail?: (row: PropertiesTableRow) => void;
   showBiddingEdit?: boolean;
-  /** Outer card classes. Pass `flex-1` to fill a flex parent. */
+  /** Outer card classes. */
   className?: string;
-  /** Infinite scroll: called when the user scrolls within ~10 rows of
-   * the loaded end. Caller fetches the next page if available. */
   onLoadMore?: () => void;
   hasMore?: boolean;
   isLoadingMore?: boolean;
 };
 
-export function PropertiesTable({
-  items,
-  isLoading,
-  isFetching,
-  emptyMessage,
-  sort,
-  order,
-  onSort,
-  onEmail,
-  showBiddingEdit = true,
-  className,
-  onLoadMore,
-  hasMore,
-  isLoadingMore,
-}: PropertiesTableProps) {
-  void isFetching;
-
-  const scrollRef = useRef<HTMLDivElement | null>(null);
-  // eslint-disable-next-line react-hooks/incompatible-library
-  const virtualizer = useVirtualizer({
-    count: items.length,
-    getScrollElement: () => scrollRef.current,
-    estimateSize: () => ROW_HEIGHT,
-    overscan: 8,
-  });
-
-  // Trigger fetch when user scrolls near the end of the loaded set.
-  const virtualItems = virtualizer.getVirtualItems();
-  useEffect(() => {
-    if (!onLoadMore || !hasMore || isLoadingMore) return;
-    const last = virtualItems[virtualItems.length - 1];
-    if (!last) return;
-    if (last.index >= items.length - 10) {
-      onLoadMore();
-    }
-  }, [virtualItems, hasMore, isLoadingMore, items.length, onLoadMore]);
-
+export function PropertiesTable(props: PropertiesTableProps) {
   // Lightbox + cell-modal state at the parent so memoized rows aren't
   // forced to re-render when modals open / close.
   const [lightbox, setLightbox] = useState<{ images: string[]; address: string } | null>(null);
@@ -94,16 +57,89 @@ export function PropertiesTable({
     [],
   );
   const handleEmail = useCallback(
-    (row: PropertiesTableRow) => onEmail?.(row),
-    [onEmail],
+    (row: PropertiesTableRow) => props.onEmail?.(row),
+    [props],
   );
 
+  const isDesktop = useMediaQuery("(min-width: 768px)");
+
   return (
-    <div className={cn("flex min-h-0 flex-col", className)}>
-      {/* Single table on every breakpoint. Phones get horizontal
-          scroll on the same grid — keeps the inline bidding edit
-          available everywhere instead of dropping to a card list. */}
-      <div className="card flex min-h-0 flex-col overflow-hidden">
+    <div className={cn("flex flex-col", isDesktop && "min-h-0", props.className)}>
+      {isDesktop ? (
+        <DesktopTable
+          {...props}
+          onOpenImages={openLightbox}
+          onOpenCellModal={openCellModal}
+          handleEmail={handleEmail}
+        />
+      ) : (
+        <MobileTable
+          {...props}
+          onOpenImages={openLightbox}
+          onOpenCellModal={openCellModal}
+          handleEmail={handleEmail}
+        />
+      )}
+
+      {lightbox && (
+        <Lightbox
+          images={lightbox.images}
+          address={lightbox.address}
+          onClose={() => setLightbox(null)}
+        />
+      )}
+
+      {cellModal && (
+        <CellModal
+          label={cellModal.label}
+          value={cellModal.value}
+          onClose={() => setCellModal(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Desktop: virtualised, internal scroll ─────────────────────────
+function DesktopTable({
+  items,
+  isLoading,
+  emptyMessage,
+  sort,
+  order,
+  onSort,
+  onEmail,
+  showBiddingEdit = true,
+  onLoadMore,
+  hasMore,
+  isLoadingMore,
+  onOpenImages,
+  onOpenCellModal,
+  handleEmail,
+}: PropertiesTableProps & {
+  onOpenImages: (images: string[], address: string) => void;
+  onOpenCellModal: (label: string, value: string) => void;
+  handleEmail: (row: PropertiesTableRow) => void;
+}) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  // eslint-disable-next-line react-hooks/incompatible-library
+  const virtualizer = useVirtualizer({
+    count: items.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 8,
+  });
+
+  const virtualItems = virtualizer.getVirtualItems();
+  useEffect(() => {
+    if (!onLoadMore || !hasMore || isLoadingMore) return;
+    const last = virtualItems[virtualItems.length - 1];
+    if (!last) return;
+    if (last.index >= items.length - 10) onLoadMore();
+  }, [virtualItems, hasMore, isLoadingMore, items.length, onLoadMore]);
+
+  return (
+    <div className="card flex min-h-0 flex-col overflow-hidden">
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
         <Header sort={sort} order={order} onSort={onSort} />
 
@@ -127,8 +163,8 @@ export function PropertiesTable({
                   property={p}
                   rowIndex={vi.index}
                   onEmail={onEmail ? handleEmail : undefined}
-                  onOpenImages={openLightbox}
-                  onOpenCellModal={openCellModal}
+                  onOpenImages={onOpenImages}
+                  onOpenCellModal={onOpenCellModal}
                   showBiddingEdit={showBiddingEdit}
                   style={{
                     position: "absolute",
@@ -160,24 +196,96 @@ export function PropertiesTable({
           </div>
         )}
       </div>
+    </div>
+  );
+}
 
+// ── Mobile: no virtualiser, no internal scroll, plain map ─────────
+// IntersectionObserver on the sentinel triggers infinite load when
+// user scrolls toward the bottom of the page.
+function MobileTable({
+  items,
+  isLoading,
+  emptyMessage,
+  sort,
+  order,
+  onSort,
+  onEmail,
+  showBiddingEdit = true,
+  onLoadMore,
+  hasMore,
+  isLoadingMore,
+  onOpenImages,
+  onOpenCellModal,
+  handleEmail,
+}: PropertiesTableProps & {
+  onOpenImages: (images: string[], address: string) => void;
+  onOpenCellModal: (label: string, value: string) => void;
+  handleEmail: (row: PropertiesTableRow) => void;
+}) {
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!onLoadMore || !hasMore) return;
+    const el = sentinelRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting && !isLoadingMore) {
+            onLoadMore();
+            break;
+          }
+        }
+      },
+      { rootMargin: "400px 0px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [onLoadMore, hasMore, isLoadingMore]);
+
+  return (
+    <div className="card overflow-hidden">
+      <div className="overflow-x-auto">
+        <Header sort={sort} order={order} onSort={onSort} />
+
+        {items.length === 0 && !isLoading ? (
+          <div className="p-10 text-center text-sm text-[var(--muted-foreground)]">
+            {emptyMessage ?? "No properties to show."}
+          </div>
+        ) : (
+          <div style={{ minWidth: TOTAL_GRID_WIDTH }}>
+            {items.map((p, idx) => (
+              <Row
+                key={p.id}
+                property={p}
+                rowIndex={idx}
+                onEmail={onEmail ? handleEmail : undefined}
+                onOpenImages={onOpenImages}
+                onOpenCellModal={onOpenCellModal}
+                showBiddingEdit={showBiddingEdit}
+                style={{ height: ROW_HEIGHT }}
+              />
+            ))}
+            <div ref={sentinelRef} style={{ minWidth: TOTAL_GRID_WIDTH, height: 1 }} />
+          </div>
+        )}
+
+        {(isLoadingMore || (!hasMore && items.length > 0)) && (
+          <div
+            className="flex items-center justify-center gap-2 border-t border-[var(--border)] bg-[var(--surface)] py-3 text-xs text-[var(--muted-foreground)]"
+            style={{ minWidth: TOTAL_GRID_WIDTH }}
+          >
+            {isLoadingMore ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Loading next 30…
+              </>
+            ) : (
+              <span>End of results</span>
+            )}
+          </div>
+        )}
       </div>
-
-      {lightbox && (
-        <Lightbox
-          images={lightbox.images}
-          address={lightbox.address}
-          onClose={() => setLightbox(null)}
-        />
-      )}
-
-      {cellModal && (
-        <CellModal
-          label={cellModal.label}
-          value={cellModal.value}
-          onClose={() => setCellModal(null)}
-        />
-      )}
     </div>
   );
 }

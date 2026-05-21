@@ -101,9 +101,9 @@ export default function EmailsPage() {
         </select>
       </div>
 
-      {/* Table */}
+      {/* Table — grows naturally; PageContainer owns the scroll. */}
       <div className="card mt-3 overflow-hidden">
-        <div className="max-h-[calc(100vh-360px)] overflow-auto">
+        <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="sticky top-0 z-10 bg-[var(--surface)]">
               <tr className="border-b border-[var(--border)]">
