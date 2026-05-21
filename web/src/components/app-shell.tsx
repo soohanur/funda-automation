@@ -3,8 +3,18 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "./sidebar";
+import { MobileNav } from "./mobile-nav";
+import { MobileTopBar } from "./mobile-topbar";
 import { useAuth } from "@/lib/auth";
 
+/**
+ * AppShell — responsive layout chrome.
+ *
+ * Desktop (md+):  classic side rail + full-height content column.
+ * Mobile (<md):   sticky frosted top bar, scrollable content, fixed
+ *                 frosted bottom tab bar (iOS pattern). Content gets
+ *                 padding to clear both chrome layers.
+ */
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const router = useRouter();
@@ -14,9 +24,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     if (!loading && !token) router.replace("/login");
   }, [loading, token, router]);
 
-  // Persist collapse state. We hydrate from localStorage once on mount —
-  // setState-in-effect is the documented React 19 pattern for client-only
-  // storage like this, since SSR has no localStorage.
   useEffect(() => {
     const v = window.localStorage.getItem("sidebar_collapsed");
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -37,8 +44,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex h-screen overflow-hidden bg-[var(--background)]">
-      <Sidebar collapsed={collapsed} onToggle={() => setCollapsed((v) => !v)} />
-      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">{children}</main>
+      {/* Side rail — desktop only. */}
+      <div className="hidden md:flex">
+        <Sidebar collapsed={collapsed} onToggle={() => setCollapsed((v) => !v)} />
+      </div>
+
+      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <MobileTopBar />
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden pb-16 md:pb-0">
+          {children}
+        </div>
+      </main>
+
+      <MobileNav />
     </div>
   );
 }

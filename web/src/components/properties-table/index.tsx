@@ -22,6 +22,7 @@ import { COLUMNS, GRID_TEMPLATE, ROW_HEIGHT, TOTAL_GRID_WIDTH } from "./columns"
 import { Row } from "./row";
 import { Lightbox } from "./lightbox";
 import { CellModal } from "./cell-modal";
+import { PropertiesCardList } from "./card-list";
 import type { PropertiesTableRow, Property } from "./types";
 
 type PropertiesTableProps = {
@@ -99,7 +100,21 @@ export function PropertiesTable({
   );
 
   return (
-    <div className={cn("card flex min-h-0 flex-col overflow-hidden", className)}>
+    <div className={cn("flex min-h-0 flex-col", className)}>
+      {/* Mobile card list (<md). Same data, same actions, iOS look. */}
+      <PropertiesCardList
+        className="md:hidden"
+        items={items}
+        isLoading={isLoading}
+        emptyMessage={emptyMessage}
+        onEmail={onEmail}
+        onLoadMore={onLoadMore}
+        hasMore={hasMore}
+        isLoadingMore={isLoadingMore}
+      />
+
+      {/* Desktop virtualised table (md+). */}
+      <div className="card hidden min-h-0 flex-col overflow-hidden md:flex">
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
         <Header sort={sort} order={order} onSort={onSort} />
 
@@ -155,6 +170,8 @@ export function PropertiesTable({
             )}
           </div>
         )}
+      </div>
+
       </div>
 
       {lightbox && (
