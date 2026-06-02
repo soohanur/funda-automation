@@ -188,7 +188,8 @@ def _batch_write_formulas_safe(
         logger.warning(f"sheet-batch formula write failed: {e}")
 
 
-async def sync_properties(db: AsyncSession) -> Dict[str, int]:
+async def sync_properties(db: AsyncSession) -> Dict[str, int]:  # noqa: D401
+    import asyncio as _aio
     """
     Read all sheet rows and upsert into `properties` table. Returns counts.
 
@@ -200,7 +201,12 @@ async def sync_properties(db: AsyncSession) -> Dict[str, int]:
     """
     from ..db.models import Property  # local import to dodge circulars
 
-    rows = fetch_sheet_rows()
+    # Run the blocking gspread reads in a worker thread so a slow / hung
+    # Google API call cannot freeze the asyncio event loop (and with it
+    # every HTTP endpoint). Without this wrapper, fetch_sheet_rows is a
+    # sync function that calls ws.get_all_values() without timeout —
+    # a Google read that never returns blocks the entire backend.
+    rows = await _aio.to_thread(fetch_sheet_rows)
     inserted = 0
     updated = 0
     bidding_filled = 0

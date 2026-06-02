@@ -105,17 +105,30 @@ async def lifespan(app: FastAPI):
     from .services.sheet_sync import sync_properties
 
     async def _auto_sync_loop():
+        # Hard cap per iteration so a hung Google Sheets call cannot
+        # freeze the event loop the way it did at 2026-06-02 00:49:41 UTC
+        # (uvicorn was alive but every request piled into CLOSE-WAIT for
+        # ~8h because fetch_sheet_rows blocked indefinitely on a Google
+        # HTTP read with no timeout).
+        ITER_TIMEOUT_SEC = 120
         await _asyncio.sleep(15)  # let startup settle
         while True:
             try:
-                async with AsyncSessionLocal() as session:
-                    result = await sync_properties(session)
+                async def _run_once():
+                    async with AsyncSessionLocal() as session:
+                        return await sync_properties(session)
+
+                result = await _asyncio.wait_for(_run_once(), timeout=ITER_TIMEOUT_SEC)
                 if result.get("inserted") or result.get("updated"):
                     logger.info(
                         f"Auto-sync: +{result['inserted']} new, "
                         f"~{result['updated']} updated "
                         f"({result['total_rows']} rows seen)"
                     )
+            except _asyncio.TimeoutError:
+                logger.warning(
+                    f"Auto-sync iteration exceeded {ITER_TIMEOUT_SEC}s — aborted, will retry"
+                )
             except Exception as e:
                 logger.warning(f"Auto-sync iteration failed: {e}")
             await _asyncio.sleep(30)
