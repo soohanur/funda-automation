@@ -32,13 +32,15 @@ EMAIL_PATTERN = re.compile(
     r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}',
 )
 
-# Contact / about pages where Dutch makelaars put their email. Tried in
-# order after the landing page, within AGENCY_WEBSITE_TIMEOUT.
+# Strategy (per user): email is on the FOOTER most of the time; if not,
+# only the CONTACT page is worth visiting. So we try every common spelling
+# of a contact URL — no /over-ons, /team, etc.
 CONTACT_PATHS = [
-    '/contact', '/contact/', '/contact-opnemen', '/contactgegevens',
-    '/over-ons', '/over-ons/', '/over', '/ons-kantoor', '/kantoor',
-    '/vestigingen', '/vestiging', '/kantoren', '/team', '/medewerkers',
-    '/makelaars', '/info', '/email',
+    '/contact', '/contact/', '/contact-us', '/contact-us/', '/contactus',
+    '/contact-ons', '/contacteer', '/contacteer-ons', '/neem-contact-op',
+    '/neem-contact-op/', '/contact-opnemen', '/contactgegevens',
+    '/contactpagina', '/contactpage', '/nl/contact', '/en/contact',
+    '/contact.html', '/contact.php', '/over-ons/contact',
 ]
 
 # Real TLDs we accept. Anything else (.push, .min, .map, .json …) is a
@@ -56,11 +58,10 @@ _JUNK_TOKENS = (
     'cdn.', 'gstatic', '@2x', '@3x', 'example.org',
 )
 
-# Anchor href/text markers for a contact/about page (custom slugs).
+# Anchor href/text markers for the CONTACT page (custom slugs only —
+# we deliberately do NOT chase about/team pages).
 _CONTACT_LINK_KEYWORDS = (
-    'contact', 'over-ons', 'over ons', 'overons', 'kantoor', 'vestiging',
-    'team', 'medewerker', 'makelaars', 'bereik', 'adres', 'route',
-    'neem-contact', 'over-mij',
+    'contact', 'contacteer', 'neem-contact', 'contactgegevens',
 )
 
 # Role-based local-parts — preferred over personal names, and used to
