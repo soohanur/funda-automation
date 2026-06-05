@@ -268,6 +268,29 @@ class EmailMessage(Base):
         return f"<EmailMessage to={self.to_email} status={self.status}>"
 
 
+class GmailCredential(Base):
+    """Stored OAuth2 tokens for the shared sender mailbox. One row per
+    (email_address) — Gmail sends are performed on behalf of this
+    account via the stored refresh_token. access_token is refreshed
+    automatically by google-auth when expired."""
+    __tablename__ = "gmail_credentials"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email_address = Column(String, unique=True, index=True, nullable=False)
+    refresh_token = Column(Text, nullable=False)
+    access_token = Column(Text)
+    token_expiry = Column(DateTime)
+    scopes = Column(String)  # space-separated
+    client_id = Column(String)
+    client_secret = Column(String)
+    token_uri = Column(String, default="https://oauth2.googleapis.com/token")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<GmailCredential {self.email_address}>"
+
+
 class ToolConfig(Base):
     """Tool-specific configuration presets."""
     __tablename__ = "tool_configs"

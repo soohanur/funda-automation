@@ -251,10 +251,16 @@ class SheetsWriter:
         try:
             sid      = ws.id
             num_cols = len(HEADERS)
-            max_rows = 2000
+            # Grow-only: never resize below current row count or prior data is lost.
+            # 2000 is the minimum baseline so brand-new tabs get a sensible buffer.
+            current_rows = ws.row_count or 0
+            max_rows = max(2000, current_rows)
 
-            # Expand sheet to fit all columns before setting widths
-            ws.resize(rows=max_rows, cols=num_cols)
+            # Only call resize when we actually need to grow — sending a resize
+            # equal to the current size still costs an API call, and a smaller
+            # value would truncate existing data.
+            if current_rows < max_rows or (ws.col_count or 0) < num_cols:
+                ws.resize(rows=max_rows, cols=num_cols)
 
             requests = [
                 # ── 1. Header row style ───────────────────────
@@ -450,10 +456,36 @@ class SheetsWriter:
                 return False
         return False
 
+    # Append-side auto-grow: when the tab's free row buffer drops below this,
+    # we extend the sheet by _ROW_GROW_CHUNK rows so append_row never silently
+    # caps out. 100 is small enough to amortize the add_rows API call across
+    # many appends, large enough to absorb a burst of concurrent writes.
+    _ROW_GROW_HEADROOM = 100
+    _ROW_GROW_CHUNK = 1000
+
+    def _ensure_row_capacity(self, ws: gspread.Worksheet, tab_name: str) -> None:
+        """Extend ws by _ROW_GROW_CHUNK rows when the used-row count gets
+        within _ROW_GROW_HEADROOM of the worksheet's total row count. Cheap
+        in steady state (col_values is cached by the seeded URL set size)
+        and never shrinks.
+        """
+        try:
+            used = len(self._tab_urls.get(tab_name, set())) + 1  # +1 for header
+            total = ws.row_count or 0
+            if total - used <= self._ROW_GROW_HEADROOM:
+                ws.add_rows(self._ROW_GROW_CHUNK)
+                logger.info(
+                    f"  Sheets [{tab_name}]: grew capacity by {self._ROW_GROW_CHUNK} "
+                    f"rows (used={used}, total was {total})"
+                )
+        except Exception as e:
+            logger.warning(f"  Sheets [{tab_name}]: capacity check failed: {e}")
+
     def _write_property_once(self, prop: dict, publication_date: int) -> bool:
         tab_name = self._get_tab_name(publication_date)
         try:
             ws = self._get_or_create_worksheet(tab_name)
+            self._ensure_row_capacity(ws, tab_name)
 
             url = (prop.get('url', '') or '').strip()
             if url and url in self._tab_urls.get(tab_name, set()):
@@ -672,13 +704,13 @@ class SheetsWriter:
         return ok
 
     def update_bidding_formula(self, url: str) -> bool:
-        """Write a per-row 25%-off formula to col I for the row matching `url`.
+        """Write a per-row 22%-off formula to col I for the row matching `url`.
 
         Used by sheet_sync on freshly-scraped rows so the spreadsheet
         does the math (zero CPU + zero per-row API quota on our side
         — single batch call writes one cell of formula text).
 
-        =IF(F{row}="", "", ROUND(F{row}*0.75))
+        =IF(F{row}="", "", ROUND(F{row}*0.78))
         """
         loc = self._lookup_row(url)
         if loc is None:
@@ -686,7 +718,7 @@ class SheetsWriter:
             return False
         ws, row_num = loc
         ask_col = 'F'  # Asking Price (€) is the 6th column.
-        formula = f'=IF({ask_col}{row_num}="","",ROUND({ask_col}{row_num}*0.75))'
+        formula = f'=IF({ask_col}{row_num}="","",ROUND({ask_col}{row_num}*0.78))'
         ok = self._batch_update_with_backoff(
             ws,
             [{

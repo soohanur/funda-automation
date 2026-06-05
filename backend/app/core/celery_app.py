@@ -20,8 +20,13 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
     task_track_started=True,
-    task_time_limit=settings.JOB_TIMEOUT,
-    task_soft_time_limit=settings.JOB_TIMEOUT - 300,  # 5 minutes before hard limit
+    # No wall-clock cap on scrape jobs. Long runs (large date ranges,
+    # captchas, slow Funda pages) must be allowed to finish; killing them
+    # mid-flight strands Chrome processes and partial writes. Stop signals
+    # come from the controller's own end-of-results / past-range logic
+    # in property_collector.py.
+    task_time_limit=None,
+    task_soft_time_limit=None,
     worker_prefetch_multiplier=1,  # One task at a time
     worker_max_tasks_per_child=50,  # Restart worker after 50 tasks (memory cleanup)
     task_acks_late=False,  # Acknowledge immediately to prevent redelivery

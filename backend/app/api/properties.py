@@ -137,8 +137,8 @@ def _dynamic_dom(listed_since: Optional[str], fallback: Optional[str]) -> Option
 
 
 def _default_bidding(asking_price: Optional[str], current: Optional[str]) -> Optional[str]:
-    """If the user hasn't entered a bidding price, default to asking × 0.75
-    (25% below asking). User-entered values always win — the PATCH-saved
+    """If the user hasn't entered a bidding price, default to asking × 0.78
+    (22% below asking). User-entered values always win — the PATCH-saved
     bidding_price overrides this synthetic default.
     """
     if current and current.strip():
@@ -154,7 +154,7 @@ def _default_bidding(asking_price: Optional[str], current: Optional[str]) -> Opt
         return current
     if asking_int <= 0:
         return current
-    return str(int(round(asking_int * 0.75)))
+    return str(int(round(asking_int * 0.78)))
 
 
 def _enrich_for_response(items: List["PropertyOut"]) -> None:
@@ -272,7 +272,7 @@ async def list_properties(
     out_items = [PropertyOut.model_validate(p) for p in items]
     # Derived fields applied on every read so dashboards stay fresh
     # without rewriting any rows: DOM grows automatically, bidding
-    # defaults to asking × 0.75 when user hasn't set one.
+    # defaults to asking × 0.78 when user hasn't set one.
     _enrich_for_response(out_items)
     if compact:
         for p in out_items:

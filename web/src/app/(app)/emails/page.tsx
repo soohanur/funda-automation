@@ -1,16 +1,18 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import {
   AlertCircle,
   CheckCircle2,
   Clock,
   Mail,
+  Send,
   TrendingUp,
   ExternalLink,
 } from "lucide-react";
+import { toast } from "sonner";
 import { emailsApi } from "@/lib/api/emails";
 import { PageContainer } from "@/components/page-container";
 import { cn, formatDate, formatNumber } from "@/lib/utils";
@@ -23,6 +25,7 @@ const STATUS_TONES: Record<string, string> = {
 
 export default function EmailsPage() {
   const [statusFilter, setStatusFilter] = useState<string>("");
+  const qc = useQueryClient();
 
   const { data: stats } = useQuery({
     queryKey: ["emails", "stats"],
@@ -36,10 +39,37 @@ export default function EmailsPage() {
     refetchInterval: 30_000,
   });
 
+  const { data: gmail } = useQuery({
+    queryKey: ["gmail", "status"],
+    queryFn: emailsApi.gmailStatus,
+    refetchInterval: 60_000,
+  });
+
+  const sendMutation = useMutation({
+    mutationFn: (id: number) => emailsApi.sendNow(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["emails"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+
+  const sendAllMutation = useMutation({
+    mutationFn: () => emailsApi.sendQueued(),
+    onSuccess: (r) => {
+      toast.success(`Sent ${r.sent} of ${r.attempted} (${r.failed} failed).`);
+      qc.invalidateQueries({ queryKey: ["emails"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+    onError: () => toast.error("Send all failed — is Gmail connected?"),
+  });
+
   const items = list?.items ?? [];
 
   return (
     <PageContainer>
+      {/* Gmail connection banner */}
+      <GmailConnectionBanner status={gmail} />
+
       {/* Stats */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <StatCard
@@ -89,6 +119,20 @@ export default function EmailsPage() {
       <div className="card mt-6 flex flex-wrap items-center gap-3 p-4">
         <h3 className="text-sm font-semibold">Recent activity</h3>
         <div className="flex-1" />
+        {(stats?.queued ?? 0) > 0 && (
+          <button
+            type="button"
+            onClick={() => sendAllMutation.mutate()}
+            disabled={!gmail?.connected || sendAllMutation.isPending}
+            className="inline-flex items-center gap-2 rounded-md bg-[var(--color-brand-600)] px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+            title={gmail?.connected ? "Send all queued + failed emails now" : "Connect Gmail first"}
+          >
+            <Send className="h-3.5 w-3.5" />
+            {sendAllMutation.isPending
+              ? "Sending…"
+              : `Send all queued (${stats?.queued ?? 0})`}
+          </button>
+        )}
         <select
           className="input max-w-[160px]"
           value={statusFilter}
@@ -180,9 +224,32 @@ export default function EmailsPage() {
                     </span>
                   </Td>
                   <Td className="text-right">
-                    <span className="text-xs text-[var(--muted-foreground)]">
-                      #{e.id}
-                    </span>
+                    <div className="flex items-center justify-end gap-2">
+                      {(e.status === "queued" || e.status === "failed") && (
+                        <button
+                          type="button"
+                          onClick={() => sendMutation.mutate(e.id)}
+                          disabled={
+                            !gmail?.connected ||
+                            (sendMutation.isPending && sendMutation.variables === e.id)
+                          }
+                          className="inline-flex items-center gap-1 rounded-md border border-[var(--border)] px-2 py-1 text-[11px] font-medium hover:bg-[var(--muted)] disabled:cursor-not-allowed disabled:opacity-50"
+                          title={
+                            gmail?.connected
+                              ? "Send via Gmail now"
+                              : "Connect Gmail first to send"
+                          }
+                        >
+                          <Send className="h-3 w-3" />
+                          {sendMutation.isPending && sendMutation.variables === e.id
+                            ? "Sending…"
+                            : "Send"}
+                        </button>
+                      )}
+                      <span className="text-xs text-[var(--muted-foreground)]">
+                        #{e.id}
+                      </span>
+                    </div>
                   </Td>
                 </tr>
               ))}
@@ -239,6 +306,41 @@ function Th({ children, className }: { children: React.ReactNode; className?: st
 
 function Td({ children, className }: { children: React.ReactNode; className?: string }) {
   return <td className={cn("px-3 py-2.5", className)}>{children}</td>;
+}
+
+function GmailConnectionBanner({
+  status,
+}: {
+  status: { connected: boolean; email_address?: string | null; reason?: string | null } | undefined;
+}) {
+  // Only show the banner when NOT connected. Once Gmail is connected it
+  // disappears — no need to nag a working setup. Undefined (still
+  // loading) hides it too, avoiding an amber flicker on first paint.
+  if (status === undefined || status.connected === true) return null;
+
+  const email = status.email_address ?? "shared sender mailbox";
+  const url = emailsApi.gmailConnectUrl();
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+      <div className="grid h-8 w-8 place-items-center rounded-md bg-white/60">
+        <Mail className="h-4 w-4" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="font-semibold">Gmail not connected</div>
+        <div className="text-xs opacity-80">
+          {status.reason ?? `Connect ${email} to start sending emails via Gmail.`}
+        </div>
+      </div>
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-flex items-center gap-2 rounded-md bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-amber-700"
+      >
+        Connect Gmail
+      </a>
+    </div>
+  );
 }
 
 function StatusChip({ status }: { status: string }) {

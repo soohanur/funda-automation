@@ -125,6 +125,29 @@ class Config:
     WALTER_RESPONSE_TIMEOUT = int(os.getenv('WALTER_RESPONSE_TIMEOUT', '240'))
     WALTER_PORT = int(os.getenv('WALTER_PORT', '9444'))
 
+    # Master switch: Walter valuation worker in the scrape pipeline. When
+    # False, the scraper writes properties to the sheet and returns
+    # immediately — no Walter chat session, no 240s per-row response wait,
+    # no captcha-driven stalls that previously made the pipeline appear
+    # stuck around the 10-minute mark. Standalone valuation cron
+    # (run_valuations.py) still works when explicitly invoked.
+    VALUATION_ENABLED = os.getenv('FUNDA_VALUATION_ENABLED', 'false').lower() == 'true'
+
+    # Per-property hard watchdog. A single scrape (page nav + parse) normally
+    # takes ~6-15s. If a worker's CDP connection silently wedges (Chrome
+    # process alive but unresponsive), the scrape call blocks forever — no
+    # page_load timeout fires, is_alive() stays True, and the worker stops
+    # draining the queue (the "stuck at N, no new writes" failure). When a
+    # single property exceeds this many seconds the watchdog force-closes the
+    # browser, which makes the hung call raise so the worker recovers and
+    # restarts its browser on the next attempt.
+    PROPERTY_SCRAPE_TIMEOUT = int(os.getenv('FUNDA_PROPERTY_SCRAPE_TIMEOUT', '120'))
+    # Controller-level stall monitor: if total scraped+filtered count doesn't
+    # advance for this long while the run is active and not in a captcha
+    # cooldown, the monitor force-kills all Chrome so workers rebuild fresh
+    # browsers. Belt-and-braces behind the per-property watchdog.
+    WORKER_STALL_TIMEOUT = int(os.getenv('FUNDA_WORKER_STALL_TIMEOUT', '300'))
+
     # WOZ (free public API: wozwaardeloket.nl)
     WOZ_API_BASE = os.getenv(
         'WOZ_API_BASE',

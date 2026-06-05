@@ -25,16 +25,28 @@ export function EmailModal({
 }
 
 function EmailModalInner({ property, onClose }: { property: Property; onClose: () => void }) {
+  const addr = property.address ?? property.url;
+  // "Bidding Price" column first; fall back to Walter's suggested bid.
+  const bid = property.bidding_price || property.suggested_bid || "—";
+  const teamName = property.agency_name ?? "team";
   const [to, setTo] = useState<string>(property.agency_email ?? "");
-  const [subject, setSubject] = useState<string>(
-    `Inquiry: ${property.address ?? "Funda listing"}`,
-  );
+  const [subject, setSubject] = useState<string>(`Bod op ${addr}`);
   const [body, setBody] = useState<string>(
-    `Hello${property.agency_name ? ` ${property.agency_name}` : ""},\n\n` +
-      `I would like to express my interest in the property at ${property.address ?? property.url}.\n\n` +
-      `Asking price: ${property.asking_price ?? "—"}\nWOZ: ${property.woz_value ?? "—"}\n\n` +
-      `Could you please share more information regarding viewings and the bidding process?\n\n` +
-      `Kind regards`,
+    `Beste team ${teamName},\n\n` +
+      `Naar aanleiding van de verkoop van uw woning aan de ${addr} brengen wij u hierbij het volgende bod uit.\n\n` +
+      `Voorwaarden\n` +
+      `* Koopsom: € ${bid}\n` +
+      `* Financiering: geen financieringsvoorbehoud\n` +
+      `* Voorbehoud: een convenierend due diligence onderzoek van 3 werkdagen. Dit onderzoek gaat in na bezichtiging\n` +
+      `* Overdrachtsdatum: Volledig in overleg. Zowel op korte als lange termijn mogelijk\n` +
+      `* Roerende zaken: Kunnen indien gewenst achterblijven\n` +
+      `* Geldigheid bod: tot vijf werkdagen\n\n` +
+      `Wij kopen de woning als professionele partij met direct beschikbare middelen. Daardoor is ons bod niet afhankelijk van een hypotheekaanvraag of andere externe goedkeuringen en kan bij overeenstemming direct worden doorgepakt.\n\n` +
+      `Wij realiseren ons dat iedere extra periode op de markt nieuwe bezichtigingen, onderhandelingen en onzekerheid met zich mee kan brengen. Met dit voorstel bieden wij een concreet aanbod waarbij u direct weet waar u aan toe bent, terwijl u zelf de regie houdt.\n\n` +
+      `Wij zien uw reactie graag tegemoet vóór bovengenoemde datum.\n\n` +
+      `Met vriendelijke groet,\n` +
+      `Nationale Vastgoed Combinatie\n` +
+      `Phone: 085208233`,
   );
   const [attachment, setAttachment] = useState<File | null>(null);
   const [sending, setSending] = useState(false);
@@ -45,7 +57,7 @@ function EmailModalInner({ property, onClose }: { property: Property; onClose: (
     if (!to || !subject) return;
     setSending(true);
     try {
-      await emailsApi.create({
+      const rec = await emailsApi.create({
         to_email: to,
         subject,
         body,
@@ -53,16 +65,23 @@ function EmailModalInner({ property, onClose }: { property: Property; onClose: (
         property_url: property.url,
         attachment_path: attachment ? attachment.name : undefined,
       });
-      toast.success(
-        "Email queued. (Google Workspace send wiring lands in a follow-up; record stored in DB + Sheet.)",
-      );
+      if (rec.status === "sent") {
+        toast.success(`Email sent to ${to}.`);
+      } else if (rec.status === "failed") {
+        toast.error(`Send failed: ${rec.error_message ?? "unknown error"}`);
+      } else {
+        toast.warning(
+          "Email queued — Gmail not connected. Connect Gmail on the Emails page, then Send all.",
+        );
+      }
       qc.invalidateQueries({ queryKey: ["emails"] });
       qc.invalidateQueries({ queryKey: ["properties"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
       onClose();
     } catch (err) {
       // @ts-expect-error axios shape
-      const msg = err?.response?.data?.detail ?? "Failed to queue email";
-      toast.error(typeof msg === "string" ? msg : "Failed to queue email");
+      const msg = err?.response?.data?.detail ?? "Failed to send email";
+      toast.error(typeof msg === "string" ? msg : "Failed to send email");
     } finally {
       setSending(false);
     }

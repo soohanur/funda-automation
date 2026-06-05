@@ -48,7 +48,7 @@ logger = logging.getLogger('funda.controller')
 # ─────────────────────────────────────────────────────────────────
 import json as _json
 _RUN_STATE_FILE = Path(config.PROJECT_ROOT) / 'funda' / 'data' / 'run_state.json'
-_RUN_STATE_MAX_AGE_SEC = 6 * 3600   # don't auto-resume crashes older than this
+_RUN_STATE_MAX_AGE_SEC = 30 * 24 * 3600   # 30 days — auto-resume long-paused crashes
 _run_state_lock = threading.Lock()
 
 
@@ -599,6 +599,37 @@ class FundaController:
                 except Exception as e:
                     logger.warning(f"  Failed to wipe profile {profile_dir}: {e}")
 
+    # ── Per-property watchdog ─────────────────────────────────
+
+    def _run_with_watchdog(self, fn, browser, worker_id: int, timeout: int, what: str):
+        """Run fn() in the calling (worker) thread, but if it blocks longer
+        than `timeout` seconds, force-close `browser` from a watchdog thread
+        so the hung CDP call raises and the worker can recover.
+
+        Returns fn()'s result on success; the underlying exception propagates
+        if fn raises (including the error caused by the forced close).
+        """
+        done = threading.Event()
+
+        def _wd():
+            # daemon so it never blocks shutdown; one-shot per call
+            if not done.wait(timeout):
+                logger.error(
+                    f"  [W{worker_id}] WATCHDOG: {what} exceeded {timeout}s — "
+                    f"force-closing browser to unblock hung worker"
+                )
+                try:
+                    browser.close_browser()
+                except Exception:
+                    pass
+
+        wd = threading.Thread(target=_wd, daemon=True)
+        wd.start()
+        try:
+            return fn()
+        finally:
+            done.set()
+
     # ── Worker thread ─────────────────────────────────────────
 
     def _worker_scrape(self, worker_id: int, work_queue: queue.Queue, write_queue: queue.Queue):
@@ -765,8 +796,12 @@ class FundaController:
                                     time.sleep(1)
                                 restart_count = 0
 
-                        # ── Scrape property ──
-                        result = scraper.scrape_property(prop_info)
+                        # ── Scrape property (hard watchdog vs CDP hangs) ──
+                        result = self._run_with_watchdog(
+                            lambda: scraper.scrape_property(prop_info),
+                            browser, worker_id,
+                            config.PROPERTY_SCRAPE_TIMEOUT, "property scrape",
+                        )
 
                         # ── CAPTCHA: trigger coordinated restart for ALL workers ──
                         if result == 'captcha':
@@ -848,8 +883,12 @@ class FundaController:
                             success = True
                             break
 
-                        # ── Scrape agency info ──
-                        result = agency_scraper.scrape_agency(result)
+                        # ── Scrape agency info (same watchdog) ──
+                        result = self._run_with_watchdog(
+                            lambda: agency_scraper.scrape_agency(result),
+                            browser, worker_id,
+                            config.PROPERTY_SCRAPE_TIMEOUT, "agency scrape",
+                        )
 
                         # Use listed_since from collector (search page date header)
                         # instead of individual property page extraction
@@ -1234,18 +1273,30 @@ class FundaController:
                     try:
                         self._update_stats(collection_status="collecting")
                         if collection_attempt > 0:
-                            # Exponential backoff: 60s, 120s, 240s, 480s, 600s (cap)
-                            cooldown = min(60 * (2 ** (collection_attempt - 1)), 600)
+                            # Exponential backoff: 15s, 30s, 60s, 90s (cap).
+                            # Previous cap of 600s = 10 min made the pipeline
+                            # look frozen between collection retries. Funda
+                            # captcha/rate signals clear within ~60s; longer
+                            # waits don't help and just stall the run.
+                            cooldown = min(15 * (2 ** (collection_attempt - 1)), 90)
                             logger.info(
                                 f"  Collection retry attempt {collection_attempt} — "
                                 f"waiting {cooldown}s before retry "
                                 f"(resume from page {resume_page or 1})"
                             )
                             self._update_stats(collection_status=f"recovery_{collection_attempt}")
-                            for _ in range(cooldown):
+                            # Heartbeat the cooldown so monitoring sees movement.
+                            _last_log = 0
+                            for _waited in range(cooldown):
                                 if self._check_stop():
                                     break
                                 time.sleep(1)
+                                if _waited - _last_log >= 15:
+                                    logger.info(
+                                        f"  Collection cooldown: {_waited}/{cooldown}s "
+                                        f"(attempt {collection_attempt})"
+                                    )
+                                    _last_log = _waited
                             if self._check_stop():
                                 break
 
@@ -1433,24 +1484,37 @@ class FundaController:
                 logger.error(f"Google Sheets connection failed: {e}")
                 sheets_writer = None
 
-            # ── Start sheets writer thread + Walter valuation worker ──
+            # ── Start sheets writer thread + optional Walter valuation worker ──
+            # Walter is gated behind config.VALUATION_ENABLED. When disabled
+            # we pass None as the valuation queue so the writer skips the
+            # hand-off — no 240s per-row response wait, no captcha stalls.
+            walter_enabled = getattr(config, 'VALUATION_ENABLED', False)
             valuation_queue: queue.Queue = queue.Queue()
+            writer_valuation_queue = valuation_queue if walter_enabled else None
             writer_stop = threading.Event()
             writer_thread = threading.Thread(
                 target=self._sheets_writer_thread,
                 args=(write_queue, sheets_writer, writer_stop, all_results,
-                      results_lock, valuation_queue),
+                      results_lock, writer_valuation_queue),
                 daemon=True,
             )
             writer_thread.start()
 
             walter_stop = threading.Event()
-            walter_thread = threading.Thread(
-                target=self._walter_worker_thread,
-                args=(valuation_queue, sheets_writer, walter_stop),
-                daemon=True,
-            )
-            walter_thread.start()
+            walter_thread: 'threading.Thread | None' = None
+            if walter_enabled:
+                walter_thread = threading.Thread(
+                    target=self._walter_worker_thread,
+                    args=(valuation_queue, sheets_writer, walter_stop),
+                    daemon=True,
+                )
+                walter_thread.start()
+            else:
+                logger.info(
+                    "  Walter valuation worker DISABLED "
+                    "(FUNDA_VALUATION_ENABLED=false) — scrape pipeline "
+                    "will not stall on chat / captcha"
+                )
 
             # ── Start persistent worker threads ───────────────
             worker_threads = []
@@ -1472,6 +1536,13 @@ class FundaController:
                 logger.info(f"  Worker {i} started (pulling from shared queue)")
 
             # ── Monitor loop: wait for collection to finish + queue to drain ──
+            # Stall guard: if scraped+filtered count stops advancing while
+            # there's still work and workers are alive (not a captcha pause),
+            # force-kill Chrome so workers rebuild fresh browsers. Backstop
+            # behind the per-property watchdog for the case where even
+            # close_browser() wedges.
+            _stall_last_total = -1
+            _stall_since = time.time()
             while not self._check_stop():
                 # Check if collection is done AND queue is empty
                 if collection_done.is_set() and work_queue.empty():
@@ -1501,6 +1572,34 @@ class FundaController:
                 total_done = self.stats.properties_scraped + self.stats.properties_filtered
                 remaining = work_queue.qsize()
                 coll_status = "done" if collection_done.is_set() else "collecting"
+
+                # ── Stall detection ──
+                if total_done != _stall_last_total:
+                    _stall_last_total = total_done
+                    _stall_since = time.time()
+                else:
+                    stalled_for = time.time() - _stall_since
+                    work_left = remaining > 0 or not collection_done.is_set()
+                    in_captcha = self._captcha_event.is_set()
+                    if (
+                        stalled_for >= config.WORKER_STALL_TIMEOUT
+                        and work_left
+                        and alive_workers > 0
+                        and not in_captcha
+                    ):
+                        logger.error(
+                            f"  STALL MONITOR: no progress for {stalled_for:.0f}s "
+                            f"(scraped+filtered stuck at {total_done}, {remaining} queued) "
+                            f"— force-killing all Chrome so workers rebuild"
+                        )
+                        try:
+                            self._kill_all_chrome()
+                        except Exception as e:
+                            logger.warning(f"  STALL MONITOR: kill failed: {e}")
+                        self._update_stats(
+                            browser_restarts=self.stats.browser_restarts + worker_count
+                        )
+                        _stall_since = time.time()  # reset; give workers time to recover
                 
                 # Progress based on ids_queued (not total_search_results)
                 self._update_stats()
@@ -1518,14 +1617,35 @@ class FundaController:
 
             # Wait for all workers to finish.
             # Stop button: short timeout so /stop is responsive.
-            # Normal completion: NO timeout — let every worker finish its
-            # current property naturally, no matter how long the queue.
+            # Normal completion: poll-join with heartbeat so a wedged
+            # browser / hung CDP connection can't freeze the pipeline at
+            # this final barrier — the controller previously called bare
+            # t.join() which blocked forever and prevented status from
+            # ever flipping to COMPLETED. Workers themselves still finish
+            # their current property naturally; this just bounds how long
+            # we wait if one becomes unresponsive.
             if self._check_stop():
                 for t in worker_threads:
                     t.join(timeout=10)
             else:
-                for t in worker_threads:
-                    t.join()  # block forever until done
+                WORKER_DRAIN_HEARTBEAT = 60
+                WORKER_DRAIN_MAX_WAIT = 30 * 60  # 30 min hard cap per worker
+                for idx, t in enumerate(worker_threads):
+                    waited = 0
+                    while t.is_alive() and waited < WORKER_DRAIN_MAX_WAIT:
+                        t.join(timeout=WORKER_DRAIN_HEARTBEAT)
+                        waited += WORKER_DRAIN_HEARTBEAT
+                        if t.is_alive():
+                            logger.warning(
+                                f"  Worker {idx} still draining after {waited}s "
+                                f"(work_queue size: {work_queue.qsize()})"
+                            )
+                    if t.is_alive():
+                        logger.error(
+                            f"  Worker {idx} did not exit after "
+                            f"{WORKER_DRAIN_MAX_WAIT}s — abandoning so pipeline "
+                            f"can declare COMPLETED. Browser may need manual cleanup."
+                        )
 
             # Wait for collection thread if still running
             coll_thread.join(timeout=10)
@@ -1535,9 +1655,22 @@ class FundaController:
             # Signal writer thread to drain and stop
             writer_stop.set()
             write_queue.put(None)
-            # Writer is fast (just sheet API calls) — 60s is enough on stop,
-            # unlimited on normal completion.
-            writer_thread.join(timeout=60 if self._check_stop() else None)
+            # Writer is fast (just sheet API calls). On stop, 60s force-cut.
+            # On normal completion, poll-join with heartbeat so a hung Sheets
+            # call (despite the 60s socket timeout) can't silently freeze the
+            # pipeline forever.
+            if self._check_stop():
+                writer_thread.join(timeout=60)
+            else:
+                _waited_writer = 0
+                while writer_thread.is_alive():
+                    writer_thread.join(timeout=30)
+                    _waited_writer += 30
+                    if writer_thread.is_alive():
+                        logger.warning(
+                            f"  Writer thread still draining after {_waited_writer}s "
+                            f"(write_queue size: {write_queue.qsize()})"
+                        )
 
             # ── Drain Walter worker ───────────────────────────
             # Writer is done — no more rows will be enqueued for valuation.
@@ -1547,10 +1680,24 @@ class FundaController:
             # valuation cells filled before we declare COMPLETED.
             walter_stop.set()
             valuation_queue.put(None)
-            if self._check_stop():
+            if walter_thread is None:
+                # Walter was never started — nothing to drain.
+                pass
+            elif self._check_stop():
                 walter_thread.join(timeout=15)
             else:
-                walter_thread.join()  # block forever until queue drained
+                # Heartbeat poll-join: Walter is the slow path (chat UI,
+                # captcha-prone), but a wedged WalterClient must not freeze
+                # the pipeline silently. Log progress every 60s.
+                _waited_walter = 0
+                while walter_thread.is_alive():
+                    walter_thread.join(timeout=60)
+                    _waited_walter += 60
+                    if walter_thread.is_alive():
+                        logger.warning(
+                            f"  Walter worker still draining after {_waited_walter}s "
+                            f"(valuation_queue size: {valuation_queue.qsize()})"
+                        )
 
             # ── Write Excel output ────────────────────────────
             with results_lock:
@@ -1568,18 +1715,25 @@ class FundaController:
                 self._update_stats(status=ScraperStatus.IDLE)
                 logger.info("Scraper stopped by user")
             else:
-                # Explicit guard: never declare COMPLETED with valuations still
-                # pending. walter_thread.join() should have already drained the
-                # queue, but if for some reason it didn't (browser stuck mid-call),
-                # fall through to FAILED so the user knows valuations are missing.
+                # Scrape itself succeeded once we got here — every queued
+                # property was either scraped, filtered, or recorded as
+                # failed. Walter valuations are a downstream side-effect
+                # (chat-driven price back-write) and must NOT flip scrape
+                # status to FAILED when they don't drain — that was the
+                # source of "scrape finished but UI shows FAILED, not
+                # COMPLETED" reports. Surface undrained valuations as a
+                # warning via last_error; status stays COMPLETED.
                 pending = self.stats.valuations_pending
                 if pending > 0:
-                    msg = (
-                        f"Scrape finished but {pending} valuation(s) are still "
-                        f"pending — Walter worker did not drain its queue."
+                    warn = (
+                        f"Scrape COMPLETED but {pending} valuation(s) "
+                        f"unfinished — Walter worker did not drain. "
+                        f"Re-run funda/run_valuations.py to back-fill."
                     )
-                    logger.error(f"  {msg}")
-                    self._update_stats(status=ScraperStatus.FAILED, last_error=msg)
+                    logger.warning(f"  {warn}")
+                    self._update_stats(
+                        status=ScraperStatus.COMPLETED, last_error=warn
+                    )
                 else:
                     self._update_stats(status=ScraperStatus.COMPLETED)
                     logger.info("Scraper completed - all properties processed (incl. valuations)!")

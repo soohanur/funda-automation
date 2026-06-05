@@ -95,6 +95,14 @@ class Settings(BaseSettings):
     REDIS_DB: int = 0
     REDIS_PASSWORD: Optional[str] = None
     REDIS_URL: Optional[str] = None
+
+    # Gmail OAuth (web flow). Used by /api/v1/auth/google/* to obtain
+    # a refresh token for the shared sender mailbox, then by the
+    # gmail_sender service to send queued email_messages via Gmail API.
+    GOOGLE_OAUTH_CLIENT_ID: Optional[str] = None
+    GOOGLE_OAUTH_CLIENT_SECRET: Optional[str] = None
+    GOOGLE_OAUTH_REDIRECT_URI: Optional[str] = None
+    GMAIL_SENDER: Optional[str] = None
     
     @validator("REDIS_URL", pre=True)
     def assemble_redis_connection(cls, v, values):
@@ -123,7 +131,10 @@ class Settings(BaseSettings):
     
     # Automation Settings
     MAX_CONCURRENT_JOBS: int = 3  # Limit concurrent Chrome instances (memory optimization)
-    JOB_TIMEOUT: int = 3600 * 36  # 36 hours (increased for large datasets)
+    # Kept for any code path that still reads this value, but Celery no
+    # longer enforces a wall-clock kill (see celery_app.py). Setting to 0
+    # would break consumers that expect a positive int — large sentinel.
+    JOB_TIMEOUT: int = 3600 * 24 * 365  # 1 year — effectively unlimited
     RETRY_MAX_ATTEMPTS: int = 3
     RETRY_DELAY: int = 60  # seconds
     

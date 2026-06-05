@@ -26,6 +26,8 @@ const PAGE_SIZE = 30;
 const STATUS_OPTIONS = [
   { label: "All status", value: "" },
   { label: "Sent email", value: "sent" },
+  { label: "Queued email", value: "queued" },
+  { label: "Failed email", value: "failed" },
   { label: "Not sent email", value: "not_sent" },
 ];
 

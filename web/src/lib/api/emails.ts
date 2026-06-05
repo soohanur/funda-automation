@@ -2,7 +2,7 @@
  * Emails API client. Talks to FastAPI /api/v1/emails.
  * Dual storage: DB (canonical) + Google Sheet (mirror).
  */
-import { api } from "../api";
+import { api, API_BASE } from "../api";
 
 export type EmailRecord = {
   id: number;
@@ -45,6 +45,13 @@ export type EmailCreate = {
   property_url?: string;
 };
 
+export type GmailStatus = {
+  connected: boolean;
+  email_address?: string | null;
+  last_updated?: string | null;
+  reason?: string | null;
+};
+
 export const emailsApi = {
   async list(params: { status?: string; property_id?: number; limit?: number; offset?: number } = {}): Promise<EmailList> {
     const r = await api.get<EmailList>("/emails", { params });
@@ -57,5 +64,24 @@ export const emailsApi = {
   async stats(): Promise<EmailStats> {
     const r = await api.get<EmailStats>("/emails/stats");
     return r.data;
+  },
+  async sendNow(id: number): Promise<EmailRecord> {
+    const r = await api.post<EmailRecord>(`/emails/${id}/send`);
+    return r.data;
+  },
+  async sendQueued(): Promise<{ attempted: number; sent: number; failed: number }> {
+    const r = await api.post<{ attempted: number; sent: number; failed: number }>(
+      "/emails/send-queued",
+    );
+    return r.data;
+  },
+  async gmailStatus(): Promise<GmailStatus> {
+    const r = await api.get<GmailStatus>("/auth/google/status");
+    return r.data;
+  },
+  // Top-level URL — opened in a new tab so Google's redirect lands on
+  // the FastAPI callback, not inside the React Router.
+  gmailConnectUrl(): string {
+    return `${API_BASE}/auth/google/start`;
   },
 };
