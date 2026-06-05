@@ -41,6 +41,19 @@ CONTACT_PATHS = [
     '/makelaars', '/info', '/email',
 ]
 
+# Real TLDs we accept. Anything else (.push, .min, .map, .json …) is a
+# JavaScript token that regex mistook for an email.
+_ALLOWED_TLDS = {
+    'nl', 'com', 'net', 'org', 'eu', 'be', 'de', 'fr', 'info', 'biz',
+    'online', 'nu', 'frl', 'amsterdam', 'email', 'io', 'co', 'app',
+}
+
+# Substrings that mark a JS/framework token rather than a real address.
+_JUNK_TOKENS = (
+    'datalayer', 'alayer.push', 'sentry', 'wixpress', 'fonts.gst',
+    '.push', 'gtm-', 'googletag', '@sentry', 'react', 'webpack',
+)
+
 # Role-based local-parts — preferred over personal names, and used to
 # rescue emails concatenated with phone numbers (e.g. "0522-252412info@x").
 ROLE_PREFIXES = (
@@ -445,6 +458,13 @@ class AgencyScraper:
             score += 40  # same brand, different TLD
         if local in ROLE_PREFIXES or any(local.startswith(p) for p in ROLE_PREFIXES):
             score += 30
+        # Very short non-role locals ("st", "d") are almost always JS noise.
+        if len(local) < 3 and local not in ROLE_PREFIXES:
+            score -= 200
+        # Prefer general/branch addresses (info@, almere@) over a specific
+        # agent's "firstname.lastname@" — a generic inbox is safer to email.
+        if '.' not in local:
+            score += 5
         # mild penalty for free-mail providers (agencies usually self-host)
         if domain in {'gmail.com', 'hotmail.com', 'outlook.com', 'live.nl',
                       'live.com', 'ziggo.nl', 'kpnmail.nl', 'planet.nl', 'hetnet.nl'}:
@@ -454,24 +474,36 @@ class AgencyScraper:
 
     @classmethod
     def _pick_best(cls, candidates, site_domain) -> Optional[str]:
-        if not candidates:
+        # Only accept a positive-scored candidate — base-only matches (score
+        # <= 0) are usually JS tokens that merely look like emails.
+        good = [(s, e) for s, e in candidates if s > 0]
+        if not good:
             return None
-        candidates.sort(key=lambda t: t[0], reverse=True)
-        return candidates[0][1]
+        good.sort(key=lambda t: t[0], reverse=True)
+        return good[0][1]
 
     @staticmethod
     def _is_valid_email(email: str) -> bool:
-        """Check if email is valid and not a generic/tracking address."""
+        """Reject generic/tracking/JS-token addresses that regex on minified
+        JavaScript happily produces (e.g. d@alayer.push, fonts.gst@ic.com)."""
         if not email or '@' not in email:
             return False
-        domain = email.split('@')[1].lower()
+        local, domain = email.rsplit('@', 1)
+        domain = domain.lower()
         if domain in SKIP_EMAIL_DOMAINS:
             return False
         if email.endswith(('.png', '.jpg', '.gif', '.svg', '.css', '.js',
                            '.webp', '.jpeg', '.ico')):
             return False
-        # reject obvious asset/hash localparts
         if len(email) > 100:
+            return False
+        # TLD must be a real one — kills .push/.min/.map/.json JS junk.
+        tld = domain.rsplit('.', 1)[-1]
+        if tld not in _ALLOWED_TLDS:
+            return False
+        # Obvious JS / framework tokens anywhere in the address.
+        low = email.lower()
+        if any(tok in low for tok in _JUNK_TOKENS):
             return False
         return True
 
