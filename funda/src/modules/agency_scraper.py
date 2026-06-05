@@ -19,25 +19,42 @@ from ..utils.logger import setup_logger
 
 logger = setup_logger('funda.agency')
 
-# Max time (seconds) to spend on any external agency website page
-AGENCY_WEBSITE_TIMEOUT = 12
+# Max time (seconds) to spend on any external agency website. Bumped from
+# 12s: the landing-page smart-wait alone ate ~10s, leaving <2s so the
+# /contact loop hit the deadline and was skipped — and most agency emails
+# live on /contact, not the landing page. 25s lets us actually visit a
+# couple of contact pages.
+AGENCY_WEBSITE_TIMEOUT = 25
 
-# Regex for email addresses
+# Regex for email addresses (case-insensitive). Used for plain-text scans;
+# mailto: links are parsed separately and trusted more.
 EMAIL_PATTERN = re.compile(
     r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}',
 )
 
-# Common contact page paths to try (reduced for speed)
+# Contact / about pages where Dutch makelaars put their email. Tried in
+# order after the landing page, within AGENCY_WEBSITE_TIMEOUT.
 CONTACT_PATHS = [
-    '/contact',
-    '/contact/',
+    '/contact', '/contact/', '/contact-opnemen', '/contactgegevens',
+    '/over-ons', '/over-ons/', '/over', '/ons-kantoor', '/kantoor',
+    '/vestigingen', '/vestiging', '/kantoren', '/team', '/medewerkers',
+    '/makelaars', '/info', '/email',
 ]
 
-# Email addresses to skip (generic/tracking)
+# Role-based local-parts — preferred over personal names, and used to
+# rescue emails concatenated with phone numbers (e.g. "0522-252412info@x").
+ROLE_PREFIXES = (
+    'info', 'contact', 'mail', 'kantoor', 'welkom', 'secretariaat',
+    'verkoop', 'sales', 'algemeen', 'wonen', 'makelaardij', 'office',
+    'hallo', 'post',
+)
+
+# Email addresses to skip (generic/tracking/third-party platform).
 SKIP_EMAIL_DOMAINS = {
-    'example.com', 'sentry.io', 'wix.com', 'facebook.com',
-    'google.com', 'googlemail.com', 'schema.org',
-    'w3.org', 'funda.nl', 'localhost',
+    'example.com', 'sentry.io', 'wix.com', 'wixpress.com', 'facebook.com',
+    'google.com', 'googlemail.com', 'schema.org', 'sentry-next.wixpress.com',
+    'w3.org', 'funda.nl', 'localhost', 'domain.com', 'email.com',
+    'yourdomain.com', 'sentry.wixpress.com',
 }
 
 
@@ -238,16 +255,17 @@ class AgencyScraper:
 
     def _find_email_on_website(self, website_url: str) -> Optional[str]:
         """
-        Visit the agency website and search for email addresses.
-        
-        Strategy:
-          1. Check the landing page (especially footer) for email
-          2. Only if not found, try /contact page
-        
-        Capped at AGENCY_WEBSITE_TIMEOUT seconds total.
+        Visit the agency website and search for the best email address.
+
+        Collects candidates from the landing page + several contact/about
+        pages, then picks the best by score (domain match > role prefix >
+        mailto source). Stops early once a domain-matching role email is
+        found. Capped at AGENCY_WEBSITE_TIMEOUT seconds total.
         """
         deadline = time.time() + AGENCY_WEBSITE_TIMEOUT
-        
+        site_domain = self._domain_of(website_url)
+        candidates: list[tuple[int, str]] = []  # (score, email)
+
         try:
             logger.debug(f"    Visiting agency website: {website_url}")
 
@@ -255,94 +273,191 @@ class AgencyScraper:
             new_tab = None
             try:
                 new_tab = self.browser.page.new_tab(website_url)
-                self._smart_wait_page(new_tab, max_wait=10)
+                self._smart_wait_page(new_tab, max_wait=8)
             except Exception as e:
                 logger.debug(f"    Failed to open new tab: {e}")
                 self.browser.navigate_to(website_url)
-                self._smart_wait(max_wait=10)
+                self._smart_wait(max_wait=8)
 
             page = new_tab if new_tab else self.browser.page
 
-            # ── Step 1: Check landing page (footer has email most of the time)
-            email = self._search_page_for_email(page)
+            def _harvest():
+                """Pull candidates from current page; return True to stop early."""
+                for email in self._collect_emails(page):
+                    score = self._score_email(email, site_domain)
+                    if score > 0:
+                        candidates.append((score, email))
+                # Stop early only on a strong hit (domain match + role prefix).
+                return any(s >= 130 for s, _ in candidates)
 
-            if not email and time.time() < deadline:
-                # ── Step 2: Try /contact page only if landing page had no email
-                base_url = self._get_base_url(website_url)
-                for path in CONTACT_PATHS:
-                    if time.time() >= deadline:
-                        logger.debug("    Agency website timeout — stopping contact page search")
-                        break
-                    contact_url = base_url.rstrip('/') + path
-                    try:
-                        page.get(contact_url)
-                        self._smart_wait_page(page, max_wait=8)
-                        email = self._search_page_for_email(page)
-                        if email:
-                            break
-                    except Exception:
-                        continue
+            # ── Landing page ──
+            if _harvest():
+                return self._finish(candidates, new_tab, site_domain)
 
-            # Close the tab
-            if new_tab:
+            # ── Contact / about pages ──
+            base_url = self._get_base_url(website_url)
+            for path in CONTACT_PATHS:
+                if time.time() >= deadline:
+                    logger.debug("    Agency website timeout — stopping page search")
+                    break
+                contact_url = base_url.rstrip('/') + path
                 try:
-                    new_tab.close()
+                    page.get(contact_url)
+                    self._smart_wait_page(page, max_wait=6)
+                    if _harvest():
+                        break
                 except Exception:
-                    pass
+                    continue
 
-            return email
+            return self._finish(candidates, new_tab, site_domain)
 
         except Exception as e:
             logger.warning(f"    Error searching agency website: {e}")
-            return None
+            try:
+                if 'new_tab' in dir() and new_tab:
+                    new_tab.close()
+            except Exception:
+                pass
+            return self._pick_best(candidates, site_domain)
 
-    def _search_page_for_email(self, page) -> Optional[str]:
-        """Search a single page for email addresses - checks mailto links, footer, and full page."""
+    def _finish(self, candidates, new_tab, site_domain) -> Optional[str]:
+        if new_tab:
+            try:
+                new_tab.close()
+            except Exception:
+                pass
+        return self._pick_best(candidates, site_domain)
+
+    def _collect_emails(self, page) -> list:
+        """Return every cleaned, plausible email on the page (mailto links
+        first so they rank higher), de-duplicated, order preserved."""
+        found: list = []
+        seen = set()
+
+        def _add(raw: str):
+            email = self._clean_email(raw)
+            if email and email not in seen and self._is_valid_email(email):
+                seen.add(email)
+                found.append(email)
+
+        # 1. mailto: links — most reliable
         try:
-            # Strategy 1: mailto: links (most reliable)
-            try:
-                mailto_links = page.eles('@@tag()=a@@href:mailto:', timeout=3)
-                for link in mailto_links:
-                    href = link.attr('href') or ''
-                    if href.startswith('mailto:'):
-                        # Strip mailto: scheme + querystring, URL-decode (some
-                        # sites prefix a space as %20 inside the mailto link).
-                        from urllib.parse import unquote
-                        email = unquote(href.replace('mailto:', '').split('?')[0]).strip()
-                        if self._is_valid_email(email):
-                            return email
-            except Exception:
-                pass
-
-            # Strategy 2: look specifically in footer area
-            try:
-                for selector in ['tag:footer', '@@class:footer', '@@id:footer', '@@class:contact']:
-                    footer = page.ele(selector, timeout=1)
-                    if footer:
-                        footer_text = footer.html
-                        emails = EMAIL_PATTERN.findall(footer_text)
-                        for email in emails:
-                            if self._is_valid_email(email):
-                                return email
-            except Exception:
-                pass
-
-            # Strategy 3: regex on full page HTML
-            try:
-                html = page.html
-                emails = EMAIL_PATTERN.findall(html)
-                for email in emails:
-                    if self._is_valid_email(email):
-                        return email
-            except Exception:
-                pass
-
+            from urllib.parse import unquote
+            for link in page.eles('@@tag()=a@@href:mailto:', timeout=3):
+                href = link.attr('href') or ''
+                if href.lower().startswith('mailto:'):
+                    _add(unquote(href[7:].split('?')[0]))
         except Exception:
             pass
 
-        return None
+        # 2. footer / contact blocks
+        try:
+            for selector in ['tag:footer', '@@class:footer', '@@id:footer',
+                             '@@class:contact', '@@id:contact']:
+                try:
+                    el = page.ele(selector, timeout=1)
+                except Exception:
+                    el = None
+                if el:
+                    for m in EMAIL_PATTERN.findall(el.html):
+                        _add(m)
+        except Exception:
+            pass
+
+        # 3. full page HTML (also catches text + obfuscated "(at)" forms)
+        try:
+            html = page.html
+            for m in EMAIL_PATTERN.findall(html):
+                _add(m)
+            # de-obfuscate "naam (at) domein (dot) nl" style
+            deob = re.sub(r'\s*\(?\s*(at|apenstaartje)\s*\)?\s*', '@', html, flags=re.I)
+            deob = re.sub(r'\s*\(?\s*dot\s*\)?\s*', '.', deob, flags=re.I)
+            for m in EMAIL_PATTERN.findall(deob):
+                _add(m)
+        except Exception:
+            pass
+
+        return found
 
     # ─── Helpers ──────────────────────────────────────────────
+
+    @classmethod
+    def _clean_email(cls, raw: str) -> Optional[str]:
+        """Normalise a raw match into a real email. Strips whitespace and
+        labels (e.g. 'Mail: '), and rescues emails glued to phone numbers
+        like '0522-252412info@x.nl' -> 'info@x.nl'."""
+        if not raw or '@' not in raw:
+            return None
+        raw = raw.strip().strip('.,;:<>()[]\'"').replace(' ', '')
+        try:
+            local, domain = raw.rsplit('@', 1)
+        except ValueError:
+            return None
+        # domain: keep only valid leading domain chars
+        dm = re.match(r'[a-zA-Z0-9.\-]+', domain)
+        if not dm:
+            return None
+        domain = dm.group(0).strip('.-').lower()
+        # drop any "Label:" prefix glued on (e.g. "E-mail:info" -> "info")
+        if ':' in local:
+            local = local.split(':')[-1]
+        # Only rescue concatenation when the local-part STARTS with junk
+        # (phone digits / dashes). A name like "sinfo" starts with a letter
+        # and must be left alone — we don't want to miscut it to "info".
+        if re.match(r'^[^a-zA-Z]', local):
+            low = local.lower()
+            cut = None
+            for kw in ROLE_PREFIXES:
+                i = low.find(kw)
+                if i != -1 and (cut is None or i < cut):
+                    cut = i
+            if cut is not None:
+                local = local[cut:]
+            else:
+                local = re.sub(r'^[^a-zA-Z]+', '', local)
+        if not local:
+            return None
+        email = f"{local}@{domain}"
+        if re.fullmatch(r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', email):
+            return email.lower()
+        return None
+
+    @staticmethod
+    def _domain_of(url_or_email: str) -> str:
+        s = (url_or_email or '').lower()
+        if '@' in s:
+            return s.rsplit('@', 1)[1]
+        from urllib.parse import urlparse
+        net = urlparse(s if s.startswith('http') else 'https://' + s).netloc
+        return net[4:] if net.startswith('www.') else net
+
+    @classmethod
+    def _score_email(cls, email: str, site_domain: str) -> int:
+        """Higher = better. Domain match dominates, then role prefix."""
+        if not email:
+            return 0
+        local, domain = email.rsplit('@', 1)
+        score = 1
+        sd = (site_domain or '').lower()
+        if sd and (domain == sd or domain.endswith('.' + sd) or sd.endswith('.' + domain)):
+            score += 100
+        elif sd and (domain.split('.')[0] == sd.split('.')[0]):
+            score += 40  # same brand, different TLD
+        if local in ROLE_PREFIXES or any(local.startswith(p) for p in ROLE_PREFIXES):
+            score += 30
+        # mild penalty for free-mail providers (agencies usually self-host)
+        if domain in {'gmail.com', 'hotmail.com', 'outlook.com', 'live.nl',
+                      'live.com', 'ziggo.nl', 'kpnmail.nl', 'planet.nl', 'hetnet.nl'}:
+            score -= 10
+        score -= min(len(local), 20) // 10  # prefer shorter local-parts slightly
+        return score
+
+    @classmethod
+    def _pick_best(cls, candidates, site_domain) -> Optional[str]:
+        if not candidates:
+            return None
+        candidates.sort(key=lambda t: t[0], reverse=True)
+        return candidates[0][1]
 
     @staticmethod
     def _is_valid_email(email: str) -> bool:
@@ -352,7 +467,11 @@ class AgencyScraper:
         domain = email.split('@')[1].lower()
         if domain in SKIP_EMAIL_DOMAINS:
             return False
-        if email.endswith(('.png', '.jpg', '.gif', '.svg', '.css', '.js')):
+        if email.endswith(('.png', '.jpg', '.gif', '.svg', '.css', '.js',
+                           '.webp', '.jpeg', '.ico')):
+            return False
+        # reject obvious asset/hash localparts
+        if len(email) > 100:
             return False
         return True
 
