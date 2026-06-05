@@ -415,28 +415,21 @@ class AgencyScraper:
         except Exception:
             pass
 
-        # 2. footer / contact blocks (text)
+        # 2. WHOLE-PAGE email search — scan the entire rendered HTML (which
+        # includes footer, header, body, anywhere). No section-specific
+        # logic: if an email exists anywhere on the page, the regex finds it.
+        # Also de-obfuscate "naam (at) domein (dot) nl" style.
         try:
-            for selector in ['tag:footer', '@@class:footer', '@@id:footer',
-                             '@@class:contact', '@@id:contact']:
-                try:
-                    el = page.ele(selector, timeout=1)
-                except Exception:
-                    el = None
-                if el:
-                    for m in EMAIL_PATTERN.findall(el.html):
-                        _add(m, False)
-        except Exception:
-            pass
-
-        # 3. full page HTML (also catches text + obfuscated "(at)" forms)
-        try:
-            html = page.html
+            html = page.html or ''
+            # also grab visible text so JS-rendered text nodes are covered
+            try:
+                html += '\n' + (page.run_js('return document.body.innerText') or '')
+            except Exception:
+                pass
             for m in EMAIL_PATTERN.findall(html):
                 _add(m, False)
-            # de-obfuscate "naam (at) domein (dot) nl" style
-            deob = re.sub(r'\s*\(?\s*(at|apenstaartje)\s*\)?\s*', '@', html, flags=re.I)
-            deob = re.sub(r'\s*\(?\s*dot\s*\)?\s*', '.', deob, flags=re.I)
+            deob = re.sub(r'\s*[\(\[]?\s*(at|apenstaartje)\s*[\)\]]?\s*', '@', html, flags=re.I)
+            deob = re.sub(r'\s*[\(\[]?\s*(dot|punt)\s*[\)\]]?\s*', '.', deob, flags=re.I)
             for m in EMAIL_PATTERN.findall(deob):
                 _add(m, False)
         except Exception:
