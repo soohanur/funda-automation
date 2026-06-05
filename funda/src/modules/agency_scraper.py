@@ -306,8 +306,8 @@ class AgencyScraper:
 
             def _harvest():
                 """Pull candidates from current page; return True to stop early."""
-                for email, is_mailto in self._collect_emails(page):
-                    score = self._score_email(email, site_domain, is_mailto)
+                for email, trusted in self._collect_emails(page):
+                    score = self._score_email(email, site_domain, trusted)
                     candidates.append((score, email))
                 # Stop early only on a strong hit (domain match + role prefix).
                 return any(s >= 130 for s, _ in candidates)
@@ -391,21 +391,35 @@ class AgencyScraper:
         return self._pick_best(candidates, site_domain)
 
     def _collect_emails(self, page) -> list:
-        """Return [(email, is_mailto)] — every cleaned, plausible email on the
-        page. mailto links are tagged trusted (the site owner explicitly
-        published them, so we accept them even on a different domain);
-        regex-from-HTML matches are untrusted (may be JS tokens / 3rd-party)
-        and only survive if they match the agency's own domain."""
+        """Return [(email, trusted)] — every cleaned, plausible email on the
+        page.
+
+        Trusted = the email is human-visible (a mailto link OR plain text the
+        visitor can actually read). A visible email is real, so we accept it
+        even on a different domain (franchise / platform agencies).
+
+        Untrusted = found only in raw HTML/JS (attributes, scripts). These may
+        be JS tokens / 3rd-party (datadog, CDN, web-builder) so they only
+        survive if they match the agency's own domain.
+        """
         found: list = []
         seen = set()
 
-        def _add(raw: str, is_mailto: bool):
+        def _add(raw: str, trusted: bool):
             email = self._clean_email(raw)
-            if email and email not in seen and self._is_valid_email(email):
-                seen.add(email)
-                found.append((email, is_mailto))
+            if not email or not self._is_valid_email(email):
+                return
+            if email in seen:
+                # upgrade trust if we now see it in a trusted context
+                if trusted:
+                    for i, (e, t) in enumerate(found):
+                        if e == email and not t:
+                            found[i] = (email, True)
+                return
+            seen.add(email)
+            found.append((email, trusted))
 
-        # 1. mailto: links — most reliable (trusted)
+        # 1. mailto: links — trusted
         try:
             from urllib.parse import unquote
             for link in page.eles('@@tag()=a@@href:mailto:', timeout=3):
@@ -415,22 +429,23 @@ class AgencyScraper:
         except Exception:
             pass
 
-        # 2. WHOLE-PAGE email search — scan the entire rendered HTML (which
-        # includes footer, header, body, anywhere). No section-specific
-        # logic: if an email exists anywhere on the page, the regex finds it.
-        # Also de-obfuscate "naam (at) domein (dot) nl" style.
+        # 2. VISIBLE TEXT — trusted. Any email a human can read on the page
+        # (footer, body, "stuur ons een mail: info@x.nl", etc.), including
+        # (at)/(dot) obfuscation. innerText excludes scripts/markup so no
+        # JS-token noise here.
         try:
-            html = page.html or ''
-            # also grab visible text so JS-rendered text nodes are covered
-            try:
-                html += '\n' + (page.run_js('return document.body.innerText') or '')
-            except Exception:
-                pass
-            for m in EMAIL_PATTERN.findall(html):
-                _add(m, False)
-            deob = re.sub(r'\s*[\(\[]?\s*(at|apenstaartje)\s*[\)\]]?\s*', '@', html, flags=re.I)
+            text = page.run_js('return document.body.innerText') or ''
+            deob = re.sub(r'\s*[\(\[]?\s*(at|apenstaartje)\s*[\)\]]?\s*', '@', text, flags=re.I)
             deob = re.sub(r'\s*[\(\[]?\s*(dot|punt)\s*[\)\]]?\s*', '.', deob, flags=re.I)
-            for m in EMAIL_PATTERN.findall(deob):
+            for m in EMAIL_PATTERN.findall(text) + EMAIL_PATTERN.findall(deob):
+                _add(m, True)
+        except Exception:
+            pass
+
+        # 3. RAW HTML — untrusted (catches emails in attributes/data-* that
+        # aren't visible text; domain-matched ones only, to avoid JS junk).
+        try:
+            for m in EMAIL_PATTERN.findall(page.html or ''):
                 _add(m, False)
         except Exception:
             pass
@@ -490,12 +505,13 @@ class AgencyScraper:
         return net[4:] if net.startswith('www.') else net
 
     @classmethod
-    def _score_email(cls, email: str, site_domain: str, is_mailto: bool = False) -> int:
+    def _score_email(cls, email: str, site_domain: str, trusted: bool = False) -> int:
         """Higher = better. Domain match dominates, then role prefix. A
-        mailto link is trusted (+60) so a legit cross-domain contact address
-        the site owner published — common for franchise/platform agencies —
-        clears the accept threshold, while a regex-from-HTML match must match
-        the agency's own domain to survive (kills JS/web-builder junk)."""
+        human-visible email (mailto link or plain page text) is trusted (+60)
+        so a legit cross-domain address — common for franchise/platform
+        agencies — clears the accept threshold, while an email seen only in
+        raw HTML/JS must match the agency's own domain to survive (kills
+        JS/web-builder junk like datadog/CDN tokens)."""
         if not email:
             return 0
         local, domain = email.rsplit('@', 1)
@@ -505,8 +521,8 @@ class AgencyScraper:
             score += 100
         elif sd and (domain.split('.')[0] == sd.split('.')[0]):
             score += 40  # same brand, different TLD
-        if is_mailto:
-            score += 60  # owner-published contact link — trust across domains
+        if trusted:
+            score += 60  # human-visible email — trust across domains
         if local in ROLE_PREFIXES or any(local.startswith(p) for p in ROLE_PREFIXES):
             score += 30
         # Very short non-role locals ("st", "d") are almost always JS noise.
