@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Loader2, Mail, Paperclip, X } from "lucide-react";
 import { toast } from "sonner";
 import { emailsApi } from "@/lib/api/emails";
+import { buildBidEmail } from "@/lib/email-template";
 import type { Property } from "@/lib/api/properties";
 
 /**
@@ -25,29 +26,13 @@ export function EmailModal({
 }
 
 function EmailModalInner({ property, onClose }: { property: Property; onClose: () => void }) {
-  const addr = property.address ?? property.url;
-  // "Bidding Price" column first; fall back to Walter's suggested bid.
-  const bid = property.bidding_price || property.suggested_bid || "—";
-  const teamName = property.agency_name ?? "team";
+  // Build the professional bid template (subject + plain text + HTML) from
+  // the property's dynamic values (company, address, 22%-bidding price).
+  const tpl = buildBidEmail(property);
   const [to, setTo] = useState<string>(property.agency_email ?? "");
-  const [subject, setSubject] = useState<string>(`Bod op ${addr}`);
-  const [body, setBody] = useState<string>(
-    `Beste team ${teamName},\n\n` +
-      `Naar aanleiding van de verkoop van uw woning aan de ${addr} brengen wij u hierbij het volgende bod uit.\n\n` +
-      `Voorwaarden\n` +
-      `* Koopsom: € ${bid}\n` +
-      `* Financiering: geen financieringsvoorbehoud\n` +
-      `* Voorbehoud: een convenierend due diligence onderzoek van 3 werkdagen. Dit onderzoek gaat in na bezichtiging\n` +
-      `* Overdrachtsdatum: Volledig in overleg. Zowel op korte als lange termijn mogelijk\n` +
-      `* Roerende zaken: Kunnen indien gewenst achterblijven\n` +
-      `* Geldigheid bod: tot vijf werkdagen\n\n` +
-      `Wij kopen de woning als professionele partij met direct beschikbare middelen. Daardoor is ons bod niet afhankelijk van een hypotheekaanvraag of andere externe goedkeuringen en kan bij overeenstemming direct worden doorgepakt.\n\n` +
-      `Wij realiseren ons dat iedere extra periode op de markt nieuwe bezichtigingen, onderhandelingen en onzekerheid met zich mee kan brengen. Met dit voorstel bieden wij een concreet aanbod waarbij u direct weet waar u aan toe bent, terwijl u zelf de regie houdt.\n\n` +
-      `Wij zien uw reactie graag tegemoet vóór bovengenoemde datum.\n\n` +
-      `Met vriendelijke groet,\n` +
-      `Nationale Vastgoed Combinatie\n` +
-      `Phone: 085208233`,
-  );
+  const [subject, setSubject] = useState<string>(tpl.subject);
+  // Editable plain-text mirror; the HTML body is what actually gets sent.
+  const [body, setBody] = useState<string>(tpl.text);
   const [attachment, setAttachment] = useState<File | null>(null);
   const [sending, setSending] = useState(false);
   const qc = useQueryClient();
@@ -61,6 +46,7 @@ function EmailModalInner({ property, onClose }: { property: Property; onClose: (
         to_email: to,
         subject,
         body,
+        body_html: tpl.html,
         property_id: property.id,
         property_url: property.url,
         attachment_path: attachment ? attachment.name : undefined,

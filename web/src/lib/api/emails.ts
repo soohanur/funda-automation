@@ -12,6 +12,7 @@ export type EmailRecord = {
   cc_emails?: string | null;
   subject: string;
   body?: string | null;
+  body_html?: string | null;
   attachment_path?: string | null;
   status: "queued" | "sent" | "failed" | string;
   error_message?: string | null;
@@ -40,6 +41,7 @@ export type EmailCreate = {
   cc_emails?: string;
   subject: string;
   body?: string;
+  body_html?: string;
   attachment_path?: string;
   property_id?: number;
   property_url?: string;

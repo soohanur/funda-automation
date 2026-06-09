@@ -252,7 +252,8 @@ class EmailMessage(Base):
     to_email = Column(String, index=True, nullable=False)
     cc_emails = Column(String)
     subject = Column(String, nullable=False)
-    body = Column(Text)
+    body = Column(Text)            # plain-text part (fallback / record)
+    body_html = Column(Text)       # HTML part — preferred when sending
     attachment_path = Column(String)
 
     status = Column(String, default="queued", index=True)  # queued|sent|failed

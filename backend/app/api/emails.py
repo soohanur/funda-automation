@@ -36,6 +36,7 @@ class EmailCreate(BaseModel):
     cc_emails: Optional[str] = None
     subject: str
     body: Optional[str] = None
+    body_html: Optional[str] = None
     attachment_path: Optional[str] = None
     property_id: Optional[int] = None
     property_url: Optional[str] = None
@@ -49,6 +50,7 @@ class EmailOut(BaseModel):
     cc_emails: Optional[str] = None
     subject: str
     body: Optional[str] = None
+    body_html: Optional[str] = None
     attachment_path: Optional[str] = None
     status: str
     error_message: Optional[str] = None
@@ -108,6 +110,7 @@ async def _deliver(db: AsyncSession, obj: EmailMessage) -> EmailMessage:
             to=obj.to_email,
             subject=obj.subject,
             body_text=obj.body or "",
+            body_html=obj.body_html or None,
             cc=obj.cc_emails,
             attachment_path=obj.attachment_path,
         )
@@ -161,6 +164,7 @@ async def create_email(payload: EmailCreate, db: AsyncSession = Depends(get_db))
         cc_emails=payload.cc_emails,
         subject=payload.subject,
         body=payload.body,
+        body_html=payload.body_html,
         attachment_path=payload.attachment_path,
         status="queued",
     )
