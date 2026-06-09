@@ -55,7 +55,16 @@ export type GmailStatus = {
 };
 
 export const emailsApi = {
-  async list(params: { status?: string; property_id?: number; limit?: number; offset?: number } = {}): Promise<EmailList> {
+  async list(
+    params: {
+      status?: string;
+      property_id?: number;
+      from_date?: string;
+      to_date?: string;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ): Promise<EmailList> {
     const r = await api.get<EmailList>("/emails", { params });
     return r.data;
   },

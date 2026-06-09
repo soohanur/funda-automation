@@ -12,7 +12,7 @@ sent / failed. The frontend already shows status correctly.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -202,6 +202,8 @@ async def list_emails(
     db: AsyncSession = Depends(get_db),
     status: Optional[str] = Query(None),
     property_id: Optional[int] = Query(None),
+    from_date: Optional[date] = Query(None, description="Inclusive start (UTC date)"),
+    to_date: Optional[date] = Query(None, description="Inclusive end (UTC date)"),
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
 ):
@@ -213,6 +215,19 @@ async def list_emails(
     if property_id is not None:
         stmt = stmt.where(EmailMessage.property_id == property_id)
         count_stmt = count_stmt.where(EmailMessage.property_id == property_id)
+    # Date filter on when the email happened: sent_at if present, else
+    # created_at — matches the dashboard graph's bucketing so the list and
+    # the graph stay in sync for the same range.
+    if from_date is not None or to_date is not None:
+        eff = func.coalesce(EmailMessage.sent_at, EmailMessage.created_at)
+        if from_date is not None:
+            lo = datetime.combine(from_date, datetime.min.time())
+            stmt = stmt.where(eff >= lo)
+            count_stmt = count_stmt.where(eff >= lo)
+        if to_date is not None:
+            hi = datetime.combine(to_date + timedelta(days=1), datetime.min.time())
+            stmt = stmt.where(eff < hi)
+            count_stmt = count_stmt.where(eff < hi)
     total = (await db.execute(count_stmt)).scalar_one()
     stmt = stmt.order_by(EmailMessage.created_at.desc()).offset(offset).limit(limit)
     r = await db.execute(stmt)

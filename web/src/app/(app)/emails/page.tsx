@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import {
   AlertCircle,
   CheckCircle2,
+  ChevronDown,
   Clock,
   Mail,
   Send,
@@ -13,8 +14,14 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { toast } from "sonner";
-import { emailsApi } from "@/lib/api/emails";
+import { emailsApi, type EmailRecord } from "@/lib/api/emails";
 import { PageContainer } from "@/components/page-container";
+import {
+  DateRangeFilter,
+  presetToRange,
+  type DateRange,
+  type RangePreset,
+} from "@/components/date-range-filter";
 import { cn, formatDate, formatNumber } from "@/lib/utils";
 
 const STATUS_TONES: Record<string, string> = {
@@ -25,7 +32,22 @@ const STATUS_TONES: Record<string, string> = {
 
 export default function EmailsPage() {
   const [statusFilter, setStatusFilter] = useState<string>("");
+  const [preset, setPreset] = useState<RangePreset>("all");
+  const [range, setRange] = useState<DateRange | null>(presetToRange("all"));
+  const [expanded, setExpanded] = useState<number | null>(null);
   const qc = useQueryClient();
+
+  // Deep-link from the dashboard graph: /emails?from=YYYY-MM-DD&to=YYYY-MM-DD
+  // pre-applies that custom range (the "linkup" with the report chart).
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search);
+    const from = sp.get("from");
+    const to = sp.get("to");
+    if (from && to) {
+      setPreset("custom");
+      setRange({ from, to });
+    }
+  }, []);
 
   const { data: stats } = useQuery({
     queryKey: ["emails", "stats"],
@@ -34,8 +56,14 @@ export default function EmailsPage() {
   });
 
   const { data: list, isLoading } = useQuery({
-    queryKey: ["emails", "list", statusFilter],
-    queryFn: () => emailsApi.list({ status: statusFilter || undefined, limit: 100 }),
+    queryKey: ["emails", "list", statusFilter, range],
+    queryFn: () =>
+      emailsApi.list({
+        status: statusFilter || undefined,
+        from_date: range?.from,
+        to_date: range?.to,
+        limit: 1000,
+      }),
     refetchInterval: 30_000,
   });
 
@@ -118,6 +146,14 @@ export default function EmailsPage() {
       {/* Toolbar */}
       <div className="card mt-6 flex flex-wrap items-center gap-3 p-4">
         <h3 className="text-sm font-semibold">Recent activity</h3>
+        <DateRangeFilter
+          preset={preset}
+          range={range}
+          onChange={(p, r) => {
+            setPreset(p);
+            setRange(r);
+          }}
+        />
         <div className="flex-1" />
         {(stats?.queued ?? 0) > 0 && (
           <button
@@ -128,9 +164,7 @@ export default function EmailsPage() {
             title={gmail?.connected ? "Send all queued + failed emails now" : "Connect Gmail first"}
           >
             <Send className="h-3.5 w-3.5" />
-            {sendAllMutation.isPending
-              ? "Sending…"
-              : `Send all queued (${stats?.queued ?? 0})`}
+            {sendAllMutation.isPending ? "Sending…" : `Send all queued (${stats?.queued ?? 0})`}
           </button>
         )}
         <select
@@ -145,120 +179,158 @@ export default function EmailsPage() {
         </select>
       </div>
 
-      {/* Table — grows naturally; PageContainer owns the scroll. */}
-      <div className="card mt-3 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="sticky top-0 z-10 bg-[var(--surface)]">
-              <tr className="border-b border-[var(--border)]">
-                <Th>Status</Th>
-                <Th>Created</Th>
-                <Th>To</Th>
-                <Th>Subject</Th>
-                <Th>Property</Th>
-                <Th>Sent at</Th>
-                <Th className="text-right">Actions</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {isLoading && (
-                <tr>
-                  <td colSpan={7} className="p-10 text-center text-sm text-[var(--muted-foreground)]">
-                    Loading…
-                  </td>
-                </tr>
-              )}
-              {!isLoading && items.length === 0 && (
-                <tr>
-                  <td colSpan={7} className="p-10 text-center text-sm text-[var(--muted-foreground)]">
-                    No emails yet. Send one from a property row.
-                  </td>
-                </tr>
-              )}
-              {items.map((e, idx) => (
-                <tr
-                  key={e.id}
-                  className={cn(
-                    "border-b border-[var(--border)] hover:bg-[var(--muted)]",
-                    idx % 2 === 1 && "bg-[var(--surface-2)]"
-                  )}
-                >
-                  <Td>
-                    <StatusChip status={e.status} />
-                  </Td>
-                  <Td>
-                    <span className="text-xs text-[var(--muted-foreground)]">
-                      {formatDate(e.created_at)}
-                    </span>
-                  </Td>
-                  <Td>{e.to_email}</Td>
-                  <Td>
-                    <span className="font-medium">{e.subject}</span>
-                  </Td>
-                  <Td>
-                    {e.property_id ? (
-                      <Link
-                        href={`/data/${e.property_id}`}
-                        className="inline-flex items-center gap-1 text-[var(--color-brand-600)] hover:underline"
-                      >
-                        View
-                        <ExternalLink className="h-3 w-3" />
-                      </Link>
-                    ) : e.property_url ? (
-                      <a
-                        href={e.property_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-[var(--color-brand-600)] hover:underline"
-                      >
-                        Funda
-                        <ExternalLink className="h-3 w-3" />
-                      </a>
-                    ) : (
-                      <span className="text-[var(--muted-foreground)]">—</span>
-                    )}
-                  </Td>
-                  <Td>
-                    <span className="text-xs text-[var(--muted-foreground)]">
-                      {e.sent_at ? formatDate(e.sent_at) : "—"}
-                    </span>
-                  </Td>
-                  <Td className="text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      {(e.status === "queued" || e.status === "failed") && (
-                        <button
-                          type="button"
-                          onClick={() => sendMutation.mutate(e.id)}
-                          disabled={
-                            !gmail?.connected ||
-                            (sendMutation.isPending && sendMutation.variables === e.id)
-                          }
-                          className="inline-flex items-center gap-1 rounded-md border border-[var(--border)] px-2 py-1 text-[11px] font-medium hover:bg-[var(--muted)] disabled:cursor-not-allowed disabled:opacity-50"
-                          title={
-                            gmail?.connected
-                              ? "Send via Gmail now"
-                              : "Connect Gmail first to send"
-                          }
-                        >
-                          <Send className="h-3 w-3" />
-                          {sendMutation.isPending && sendMutation.variables === e.id
-                            ? "Sending…"
-                            : "Send"}
-                        </button>
-                      )}
-                      <span className="text-xs text-[var(--muted-foreground)]">
-                        #{e.id}
-                      </span>
-                    </div>
-                  </Td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {/* Scrollable activity list — click a row to expand the full email. */}
+      <div className="card mt-3 flex flex-col overflow-hidden">
+        <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-2.5 text-xs text-[var(--muted-foreground)]">
+          <span>{formatNumber(list?.total ?? 0)} email(s) in range</span>
+          <span>Click a row to read the message</span>
+        </div>
+        <div className="max-h-[60vh] overflow-y-auto">
+          {isLoading ? (
+            <div className="p-10 text-center text-sm text-[var(--muted-foreground)]">Loading…</div>
+          ) : items.length === 0 ? (
+            <div className="p-10 text-center text-sm text-[var(--muted-foreground)]">
+              No emails in this range.
+            </div>
+          ) : (
+            items.map((e, idx) => (
+              <EmailRow
+                key={e.id}
+                email={e}
+                zebra={idx % 2 === 1}
+                expanded={expanded === e.id}
+                onToggle={() => setExpanded(expanded === e.id ? null : e.id)}
+                canSend={!!gmail?.connected}
+                sending={sendMutation.isPending && sendMutation.variables === e.id}
+                onSend={() => sendMutation.mutate(e.id)}
+              />
+            ))
+          )}
         </div>
       </div>
-
     </PageContainer>
+  );
+}
+
+function EmailRow({
+  email: e,
+  zebra,
+  expanded,
+  onToggle,
+  canSend,
+  sending,
+  onSend,
+}: {
+  email: EmailRecord;
+  zebra: boolean;
+  expanded: boolean;
+  onToggle: () => void;
+  canSend: boolean;
+  sending: boolean;
+  onSend: () => void;
+}) {
+  return (
+    <div className={cn("border-b border-[var(--border)]", zebra && "bg-[var(--surface-2)]")}>
+      {/* summary row */}
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-[var(--muted)]"
+      >
+        <ChevronDown
+          className={cn(
+            "h-4 w-4 shrink-0 text-[var(--muted-foreground)] transition-transform",
+            expanded && "rotate-180",
+          )}
+        />
+        <StatusChip status={e.status} />
+        <span className="hidden w-44 shrink-0 truncate text-xs text-[var(--muted-foreground)] sm:block">
+          {e.sent_at ? formatDate(e.sent_at) : formatDate(e.created_at)}
+        </span>
+        <span className="hidden w-52 shrink-0 truncate text-sm sm:block">{e.to_email}</span>
+        <span className="min-w-0 flex-1 truncate text-sm font-medium">{e.subject}</span>
+        <span className="shrink-0 text-xs text-[var(--muted-foreground)]">#{e.id}</span>
+      </button>
+
+      {/* expanded detail */}
+      {expanded && (
+        <div className="border-t border-[var(--border)] bg-[var(--surface)] px-4 py-4 sm:px-12">
+          <div className="grid grid-cols-1 gap-x-8 gap-y-1.5 text-xs sm:grid-cols-2">
+            <Field label="To" value={e.to_email} />
+            <Field label="Status" value={e.status} />
+            {e.cc_emails && <Field label="Cc" value={e.cc_emails} />}
+            <Field label="Created" value={formatDate(e.created_at) || "—"} />
+            <Field label="Sent at" value={e.sent_at ? formatDate(e.sent_at) : "—"} />
+            {e.error_message && <Field label="Error" value={e.error_message} tone="rose" />}
+          </div>
+
+          <div className="mt-3">
+            <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">
+              Subject
+            </div>
+            <div className="text-sm font-medium">{e.subject}</div>
+          </div>
+
+          <div className="mt-3">
+            <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">
+              Body
+            </div>
+            {e.body_html ? (
+              <div
+                className="overflow-hidden rounded-lg border border-[var(--border)] bg-white"
+                // Internal admin tool; body_html is our own generated template.
+                dangerouslySetInnerHTML={{ __html: e.body_html }}
+              />
+            ) : (
+              <pre className="whitespace-pre-wrap rounded-lg border border-[var(--border)] bg-[var(--surface-2)] p-3 text-sm">
+                {e.body || "—"}
+              </pre>
+            )}
+          </div>
+
+          <div className="mt-3 flex items-center gap-3">
+            {e.property_id ? (
+              <Link
+                href={`/data/${e.property_id}`}
+                className="inline-flex items-center gap-1 text-xs text-[var(--color-brand-600)] hover:underline"
+              >
+                View property <ExternalLink className="h-3 w-3" />
+              </Link>
+            ) : e.property_url ? (
+              <a
+                href={e.property_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-xs text-[var(--color-brand-600)] hover:underline"
+              >
+                Funda listing <ExternalLink className="h-3 w-3" />
+              </a>
+            ) : null}
+            {(e.status === "queued" || e.status === "failed") && (
+              <button
+                type="button"
+                onClick={onSend}
+                disabled={!canSend || sending}
+                className="inline-flex items-center gap-1 rounded-md border border-[var(--border)] px-2 py-1 text-[11px] font-medium hover:bg-[var(--muted)] disabled:cursor-not-allowed disabled:opacity-50"
+                title={canSend ? "Send via Gmail now" : "Connect Gmail first"}
+              >
+                <Send className="h-3 w-3" />
+                {sending ? "Sending…" : "Send now"}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Field({ label, value, tone }: { label: string; value: string; tone?: "rose" }) {
+  return (
+    <div className="flex gap-2">
+      <span className="w-16 shrink-0 text-[var(--muted-foreground)]">{label}</span>
+      <span className={cn("min-w-0 break-words", tone === "rose" && "text-rose-700")}>{value}</span>
+    </div>
   );
 }
 
@@ -294,18 +366,6 @@ function StatCard({
       <div className={cn("grid h-10 w-10 place-items-center rounded-xl", toneClass)}>{icon}</div>
     </div>
   );
-}
-
-function Th({ children, className }: { children: React.ReactNode; className?: string }) {
-  return (
-    <th className={cn("px-3 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]", className)}>
-      {children}
-    </th>
-  );
-}
-
-function Td({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <td className={cn("px-3 py-2.5", className)}>{children}</td>;
 }
 
 function GmailConnectionBanner({

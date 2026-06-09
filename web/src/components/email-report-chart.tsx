@@ -7,8 +7,9 @@
  * Data source: GET /api/v1/dashboard/email-report which buckets by
  * day / month / year based on the requested period.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useRouter } from "next/navigation";
 import {
   Bar,
   BarChart,
@@ -19,12 +20,13 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { Loader2 } from "lucide-react";
+import { CalendarDays, Loader2 } from "lucide-react";
 import {
   dashboardApi,
   type EmailReport,
   type EmailReportPeriod,
 } from "@/lib/api/dashboard";
+import { RangeCalendar, type DateRange } from "@/components/date-range-filter";
 import { cn, formatNumber } from "@/lib/utils";
 
 const PRESETS: { label: string; value: EmailReportPeriod }[] = [
@@ -43,18 +45,28 @@ const SERIES = [
 ] as const;
 
 export function EmailReportChart({ className }: { className?: string }) {
+  const router = useRouter();
   const [period, setPeriod] = useState<EmailReportPeriod>("month");
-  const [fromDate, setFromDate] = useState<string>("");
-  const [toDate, setToDate] = useState<string>("");
+  const [custom, setCustom] = useState<DateRange | null>(null);
+  const [calOpen, setCalOpen] = useState(false);
+  const calRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!calOpen) return;
+    const onDoc = (ev: MouseEvent) => {
+      if (calRef.current && !calRef.current.contains(ev.target as Node)) setCalOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [calOpen]);
 
   const queryArgs = useMemo(() => {
     if (period === "custom") {
-      // Only fire when both dates set — otherwise the request returns 400.
-      if (!fromDate || !toDate) return null;
-      return { period, from_date: fromDate, to_date: toDate };
+      if (!custom) return null;
+      return { period, from_date: custom.from, to_date: custom.to };
     }
     return { period };
-  }, [period, fromDate, toDate]);
+  }, [period, custom]);
 
   const { data, isLoading, isFetching, error } = useQuery<EmailReport>({
     queryKey: ["dashboard", "email-report", queryArgs],
@@ -108,20 +120,27 @@ export function EmailReportChart({ className }: { className?: string }) {
           </div>
 
           {period === "custom" && (
-            <div className="flex items-center gap-1">
-              <input
-                type="date"
-                value={fromDate}
-                onChange={(e) => setFromDate(e.target.value)}
-                className="input h-9 w-36 text-sm"
-              />
-              <span className="text-xs text-[var(--muted-foreground)]">→</span>
-              <input
-                type="date"
-                value={toDate}
-                onChange={(e) => setToDate(e.target.value)}
-                className="input h-9 w-36 text-sm"
-              />
+            <div ref={calRef} className="relative">
+              <button
+                type="button"
+                onClick={() => setCalOpen((o) => !o)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-3 py-1.5 text-xs font-medium hover:bg-[var(--muted)]"
+              >
+                <CalendarDays className="h-3.5 w-3.5" />
+                {custom ? `${custom.from} → ${custom.to}` : "Pick dates"}
+              </button>
+              {calOpen && (
+                <div className="absolute top-full right-0 z-50 mt-2">
+                  <RangeCalendar
+                    value={custom}
+                    onApply={(r) => {
+                      setCustom(r);
+                      setCalOpen(false);
+                    }}
+                    onClose={() => setCalOpen(false)}
+                  />
+                </div>
+              )}
             </div>
           )}
 
@@ -150,7 +169,18 @@ export function EmailReportChart({ className }: { className?: string }) {
           </div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={buckets} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
+            <BarChart
+              data={buckets}
+              margin={{ top: 8, right: 8, left: -8, bottom: 0 }}
+              onClick={(st) => {
+                // Linkup: click a bucket → open the Emails list filtered to it.
+                const raw = (st as { activeLabel?: string | number })?.activeLabel;
+                if (raw == null || !data) return;
+                const r = bucketToRange(String(raw), data.granularity);
+                router.push(`/emails?from=${r.from}&to=${r.to}`);
+              }}
+              className="cursor-pointer"
+            >
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
               <XAxis
                 dataKey="bucket"
@@ -188,4 +218,21 @@ export function EmailReportChart({ className }: { className?: string }) {
       </div>
     </div>
   );
+}
+
+/** Expand a chart bucket label into an inclusive date range for the
+ * emails list, based on the chart's granularity. */
+function bucketToRange(
+  label: string,
+  granularity: "day" | "month" | "year",
+): { from: string; to: string } {
+  if (granularity === "day") return { from: label, to: label };
+  if (granularity === "month") {
+    // label = YYYY-MM
+    const [y, m] = label.split("-").map(Number);
+    const last = new Date(y, m, 0).getDate(); // day 0 of next month = last day
+    return { from: `${label}-01`, to: `${label}-${String(last).padStart(2, "0")}` };
+  }
+  // year = YYYY
+  return { from: `${label}-01-01`, to: `${label}-12-31` };
 }
