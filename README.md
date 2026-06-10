@@ -26,3 +26,13 @@ The app runs on a Hostinger VPS at `sons.business` with:
 - Nginx reverse proxy + Let's Encrypt SSL
 - systemd services (datainfo-backend, datainfo-celery)
 - PostgreSQL + Redis
+
+---
+
+## ⭐ Star this repo
+
+If you find this project helpful, please give it a star on GitHub — it helps others discover it and motivates further development.
+
+[![Star on GitHub](https://img.shields.io/github/stars/soohanur/real-estate-automation?style=social)](https://github.com/soohanur/real-estate-automation)
+
+👉 [**Star this repository**](https://github.com/soohanur/real-estate-automation)
