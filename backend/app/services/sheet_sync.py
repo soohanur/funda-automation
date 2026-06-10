@@ -153,7 +153,9 @@ def _default_bidding_from_asking(asking_price: Optional[str]) -> Optional[str]:
         return None
     if asking_int <= 0:
         return None
-    return str(int(round(asking_int * 0.80)))
+    # 20% off, but the discount is capped at €86,000 (flat -86k above €430k).
+    discount = min(round(asking_int * 0.20), 86000)
+    return str(int(asking_int - discount))
 
 
 def _batch_write_formulas_safe(
@@ -259,7 +261,7 @@ async def sync_properties(db: AsyncSession) -> Dict[str, int]:  # noqa: D401
             payload["sheet_tab"] = sheet_tab
 
         # The Sheet now holds the 20%-off math as a per-row formula
-        # (=IF(F<r>="","",ROUND(F<r>*0.80))). Whenever the Sheet cell
+        # (=IF(F<r>="","",MAX(ROUND(F<r>*0.8),F<r>-86000))). Whenever the Sheet cell
         # is blank — which happens on freshly-scraped rows that haven't
         # been formula-written yet — we enqueue a one-cell formula
         # write. DB just receives whatever value the Sheet evaluates
@@ -272,7 +274,7 @@ async def sync_properties(db: AsyncSession) -> Dict[str, int]:  # noqa: D401
             if not (sheet_tab and row_index and asking_present and sheet_bidding_blank):
                 return
             formula = (
-                f'=IF({_ASK_COL}{row_index}="","",ROUND({_ASK_COL}{row_index}*0.80))'
+                f'=IF({_ASK_COL}{row_index}="","",MAX(ROUND({_ASK_COL}{row_index}*0.8),{_ASK_COL}{row_index}-86000))'
             )
             pending_formula_writes.setdefault(sheet_tab, []).append((row_index, formula))
 

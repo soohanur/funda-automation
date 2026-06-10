@@ -137,9 +137,10 @@ def _dynamic_dom(listed_since: Optional[str], fallback: Optional[str]) -> Option
 
 
 def _default_bidding(asking_price: Optional[str], current: Optional[str]) -> Optional[str]:
-    """If the user hasn't entered a bidding price, default to asking × 0.80
-    (20% below asking). User-entered values always win — the PATCH-saved
-    bidding_price overrides this synthetic default.
+    """If the user hasn't entered a bidding price, default to asking minus
+    20%, BUT the discount is capped at €86,000 — so for asking above
+    €430,000 the bid is a flat asking − 86,000 (not a full 20%).
+    User-entered values always win.
     """
     if current and current.strip():
         return current
@@ -154,7 +155,8 @@ def _default_bidding(asking_price: Optional[str], current: Optional[str]) -> Opt
         return current
     if asking_int <= 0:
         return current
-    return str(int(round(asking_int * 0.80)))
+    discount = min(round(asking_int * 0.20), 86000)
+    return str(int(asking_int - discount))
 
 
 def _enrich_for_response(items: List["PropertyOut"]) -> None:
