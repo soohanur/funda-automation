@@ -1,36 +1,23 @@
 /**
- * Address cell — bold text + one-click copy button. Click on the text
- * expands the full value ONLY when it's truncated (Excel-like).
+ * Address cell — bold text + one-click copy button. When truncated,
+ * clicking the text expands the full value inline (Excel-like, no popup).
  */
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Check, Copy } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { ExpandableText } from "./expandable-text";
 import type { PropertiesTableRow } from "../types";
 
 export function AddressCell({
   property,
-  label,
-  onOverflow,
 }: {
   property: PropertiesTableRow;
-  label: string;
-  onOverflow: (label: string, value: string) => void;
+  label?: string;
+  onOverflow?: (label: string, value: string) => void;
 }) {
   const raw = (property.address ?? "").toString().trim();
-  const spanRef = useRef<HTMLSpanElement>(null);
-  const [overflow, setOverflow] = useState(false);
   const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    const el = spanRef.current;
-    if (!el) return;
-    const check = () => setOverflow(el.scrollWidth > el.clientWidth + 1);
-    check();
-    const ro = new ResizeObserver(check);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [raw]);
 
   if (!raw) return <span className="text-[var(--muted-foreground)]">—</span>;
 
@@ -48,17 +35,7 @@ export function AddressCell({
 
   return (
     <div className="flex w-full max-w-full items-center gap-1.5 overflow-hidden">
-      <span
-        ref={spanRef}
-        onClick={() => overflow && onOverflow(label, raw)}
-        className={cn(
-          "min-w-0 flex-1 truncate font-medium",
-          overflow && "cursor-pointer",
-        )}
-        title={overflow ? raw : undefined}
-      >
-        {raw}
-      </span>
+      <ExpandableText text={raw} className="font-medium" />
       <button
         type="button"
         onClick={onCopy}

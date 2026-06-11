@@ -22,7 +22,6 @@ import { useMediaQuery } from "@/lib/use-media-query";
 import { COLUMNS, GRID_TEMPLATE, ROW_HEIGHT, TOTAL_GRID_WIDTH } from "./columns";
 import { Row } from "./row";
 import { Lightbox } from "./lightbox";
-import { CellModal } from "./cell-modal";
 import type { PropertiesTableRow, Property } from "./types";
 
 type PropertiesTableProps = {
@@ -47,16 +46,14 @@ export function PropertiesTable(props: PropertiesTableProps) {
   // Lightbox + cell-modal state at the parent so memoized rows aren't
   // forced to re-render when modals open / close.
   const [lightbox, setLightbox] = useState<{ images: string[]; address: string } | null>(null);
-  const [cellModal, setCellModal] = useState<{ label: string; value: string } | null>(null);
 
   const openLightbox = useCallback(
     (images: string[], address: string) => setLightbox({ images, address }),
     [],
   );
-  const openCellModal = useCallback(
-    (label: string, value: string) => setCellModal({ label, value }),
-    [],
-  );
+  // Cells now expand inline (no popup). Kept as a no-op so the existing
+  // prop plumbing to Row stays valid without a wider refactor.
+  const openCellModal = useCallback((_label: string, _value: string) => {}, []);
   const handleEmail = useCallback(
     (row: PropertiesTableRow) => props.onEmail?.(row),
     [props],
@@ -90,13 +87,6 @@ export function PropertiesTable(props: PropertiesTableProps) {
         />
       )}
 
-      {cellModal && (
-        <CellModal
-          label={cellModal.label}
-          value={cellModal.value}
-          onClose={() => setCellModal(null)}
-        />
-      )}
     </div>
   );
 }
