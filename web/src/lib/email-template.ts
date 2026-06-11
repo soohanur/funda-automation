@@ -12,7 +12,6 @@ import type { Property } from "./api/properties";
 
 const SENDER_NAME = "Nationale Vastgoed Combinatie";
 const SENDER_PHONE = "085-2082323";
-const VALIDITY_DAYS = 5;
 
 function euro(v: string | null | undefined): string {
   const n = parseInt(String(v ?? "").replace(/[^0-9]/g, ""), 10);
@@ -36,15 +35,17 @@ export function buildBidEmail(property: Property): BidEmail {
     ``,
     `Voorwaarden`,
     `- Koopsom: ${bidding}`,
-    `- Financiering: geen financieringsvoorbehoud`,
-    `- Voorbehoud: een conveniërend due diligence onderzoek van 3 werkdagen. Dit onderzoek gaat in na bezichtiging.`,
-    `- Overdrachtsdatum: volledig in overleg. Zowel op korte als lange termijn mogelijk.`,
-    `- Roerende zaken: kunnen indien gewenst achterblijven.`,
-    `- Geldigheid bod: tot ${VALIDITY_DAYS} werkdagen.`,
+    `- Financiering: Geen financieringsvoorbehoud`,
+    `- Voorbehoud: Een conveniërend due diligence onderzoek van 3 werkdagen. Dit onderzoek gaat in na bezichtiging.`,
+    `- Overdrachtsdatum: Volledig in overleg. Zowel op korte als lange termijn mogelijk.`,
+    `- Roerende zaken: Kunnen indien gewenst achterblijven.`,
+    `- Geldigheid bod: Tot vijf werkdagen na dagtekening van deze brief.`,
     ``,
     `Wij kopen de woning als professionele partij met direct beschikbare middelen. Daardoor is ons bod niet afhankelijk van een hypotheekaanvraag of andere externe goedkeuringen en kan bij overeenstemming direct worden doorgepakt.`,
     ``,
-    `Mocht verkoper akkoord gaan met het bod, dan zouden wij graag van uw diensten gebruik willen maken om de woning, nadat wij deze hebben aangekocht, weer in verkoop te nemen.`,
+    `Wij realiseren ons dat iedere extra periode op de markt nieuwe bezichtigingen, onderhandelingen en onzekerheid met zich mee kan brengen. Met dit voorstel bieden wij een concreet aanbod waarbij u direct weet waar u aan toe bent, terwijl u zelf de regie houdt.`,
+    ``,
+    `Mocht jullie kantoor ander interessant vastgoed in de verkoop hebben of krijgen met potentie? Dan houden wij ons graag aanbevolen. Wij zijn op zoek naar transformatie objecten, verhuurde woningen, ontwikkelgronden, bedrijfspanden, klushuizen, en huizen van verkopers die direct of in stille verkoop wensen te verkopen. Wij kopen direct en met eigen middelen. Geen bestedingslimiet.`,
     ``,
     `Wij zien uw reactie graag tegemoet vóór bovengenoemde datum.`,
     ``,
@@ -87,15 +88,16 @@ export function buildBidEmail(property: Property): BidEmail {
           <h3 style="margin:24px 0 12px 0;font-size:15px;color:#0f3a73;text-transform:uppercase;letter-spacing:.5px;">Voorwaarden</h3>
           <ul style="margin:0 0 20px 0;padding-left:20px;color:#334155;font-size:15px;">
             ${li("Koopsom", `<span style="color:#0f3a73;font-weight:700;">${bidding}</span>`)}
-            ${li("Financiering", "geen financieringsvoorbehoud")}
-            ${li("Voorbehoud", "een conveniërend due diligence onderzoek van 3 werkdagen. Dit onderzoek gaat in na bezichtiging.")}
-            ${li("Overdrachtsdatum", "volledig in overleg. Zowel op korte als lange termijn mogelijk.")}
-            ${li("Roerende zaken", "kunnen indien gewenst achterblijven.")}
-            ${li("Geldigheid bod", `tot ${VALIDITY_DAYS} werkdagen.`)}
+            ${li("Financiering", "Geen financieringsvoorbehoud")}
+            ${li("Voorbehoud", "Een conveniërend due diligence onderzoek van 3 werkdagen. Dit onderzoek gaat in na bezichtiging.")}
+            ${li("Overdrachtsdatum", "Volledig in overleg. Zowel op korte als lange termijn mogelijk.")}
+            ${li("Roerende zaken", "Kunnen indien gewenst achterblijven.")}
+            ${li("Geldigheid bod", "Tot vijf werkdagen na dagtekening van deze brief.")}
           </ul>
 
           ${p("Wij kopen de woning als professionele partij met direct beschikbare middelen. Daardoor is ons bod niet afhankelijk van een hypotheekaanvraag of andere externe goedkeuringen en kan bij overeenstemming direct worden doorgepakt.")}
-          ${p("Mocht verkoper akkoord gaan met het bod, dan zouden wij graag van uw diensten gebruik willen maken om de woning, nadat wij deze hebben aangekocht, weer in verkoop te nemen.")}
+          ${p("Wij realiseren ons dat iedere extra periode op de markt nieuwe bezichtigingen, onderhandelingen en onzekerheid met zich mee kan brengen. Met dit voorstel bieden wij een concreet aanbod waarbij u direct weet waar u aan toe bent, terwijl u zelf de regie houdt.")}
+          ${p("Mocht jullie kantoor ander interessant vastgoed in de verkoop hebben of krijgen met potentie? Dan houden wij ons graag aanbevolen. Wij zijn op zoek naar transformatie objecten, verhuurde woningen, ontwikkelgronden, bedrijfspanden, klushuizen, en huizen van verkopers die direct of in stille verkoop wensen te verkopen. Wij kopen direct en met eigen middelen. Geen bestedingslimiet.")}
           ${p("Wij zien uw reactie graag tegemoet vóór bovengenoemde datum.")}
 
           <p style="margin:24px 0 0 0;line-height:1.6;color:#334155;">
