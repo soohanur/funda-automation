@@ -1,8 +1,10 @@
 /**
- * Generic single-line cell with click-to-expand modal. Wraps any
- * rendered cell content so the user can read overflow text without
- * breaking the fixed-height row layout.
+ * Generic single-line cell. Click-to-expand ONLY when the content is
+ * actually truncated (overflowing) — like Excel. Non-overflowing cells
+ * are inert (no pointer, no popup).
  */
+import { useEffect, useRef, useState } from "react";
+import { cn } from "@/lib/utils";
 
 export function ClickableCell({
   label,
@@ -16,18 +18,35 @@ export function ClickableCell({
   onOverflow: (label: string, value: string) => void;
 }) {
   const text = (rawValue ?? "").toString();
+  const spanRef = useRef<HTMLSpanElement>(null);
+  const [overflow, setOverflow] = useState(false);
+
+  useEffect(() => {
+    const el = spanRef.current;
+    if (!el) return;
+    const check = () => setOverflow(el.scrollWidth > el.clientWidth + 1);
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [text]);
+
   const handler = () => {
-    if (text.trim().length === 0) return;
-    onOverflow(label, text);
+    if (overflow && text.trim().length > 0) onOverflow(label, text);
   };
+
   return (
-    <button
-      type="button"
+    <div
       onClick={handler}
-      className="flex w-full max-w-full items-center overflow-hidden text-left"
-      title={text || undefined}
+      className={cn(
+        "flex w-full max-w-full items-center overflow-hidden",
+        overflow ? "cursor-pointer" : "cursor-default",
+      )}
+      title={overflow ? text : undefined}
     >
-      <span className="block w-full truncate">{value}</span>
-    </button>
+      <span ref={spanRef} className="block w-full truncate">
+        {value}
+      </span>
+    </div>
   );
 }
