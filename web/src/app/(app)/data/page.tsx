@@ -54,6 +54,7 @@ export default function DataPage() {
   const [filters, setFilters] = useState<Filters>({
     sort: "scrape_date",
     order: "asc",
+    email_status: "not_sent",
   });
   const [searchInput, setSearchInput] = useState("");
   const [emailProperty, setEmailProperty] = useState<Property | null>(null);
