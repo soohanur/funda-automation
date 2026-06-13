@@ -106,4 +106,10 @@ export const propertiesApi = {
     const r = await api.delete(`/properties/${id}`);
     return r.data;
   },
+  async bulkRemove(
+    ids: number[],
+  ): Promise<{ deleted: number; sheet_deleted: number; kvk_removed: number }> {
+    const r = await api.post("/properties/bulk-delete", { ids });
+    return r.data;
+  },
 };

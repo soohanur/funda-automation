@@ -28,6 +28,8 @@ type RowProps = {
   onOpenImages: (images: string[], address: string) => void;
   onOpenCellModal: (label: string, value: string) => void;
   showBiddingEdit: boolean;
+  selected?: boolean;
+  onToggleSelect?: (id: number) => void;
   style: React.CSSProperties;
 };
 
@@ -39,6 +41,8 @@ export const Row = memo(function Row({
   onOpenImages,
   onOpenCellModal,
   showBiddingEdit,
+  selected,
+  onToggleSelect,
   style,
 }: RowProps) {
   const qc = useQueryClient();
@@ -59,8 +63,20 @@ export const Row = memo(function Row({
       className={cn(
         "grid border-b border-[var(--border)] hover:bg-[var(--muted)]",
         rowIndex % 2 === 1 && "bg-[var(--surface-2)]",
+        selected && "bg-[var(--color-brand-50)]",
       )}
     >
+      <div className="grid h-12 place-items-center px-2">
+        {onToggleSelect && (
+          <input
+            type="checkbox"
+            checked={!!selected}
+            onChange={() => onToggleSelect(property.id)}
+            className="h-4 w-4 cursor-pointer accent-[var(--color-brand-600)]"
+            aria-label="Select row"
+          />
+        )}
+      </div>
       {COLUMNS.map((c) => (
         <div
           key={c.key as string}

@@ -46,13 +46,15 @@ export const COLUMNS: ColumnDef[] = [
 
 export const ROW_HEIGHT = 48;
 export const ACTIONS_WIDTH = "108px";
+export const SELECT_WIDTH = "44px";
 
-/** Pre-computed grid-template-columns string so header + every row
- * stay aligned without per-render string concatenation. */
-export const GRID_TEMPLATE = COLUMNS.map((c) => c.width).join(" ") + ` ${ACTIONS_WIDTH}`;
+/** Pre-computed grid-template-columns string. Leading select-checkbox
+ * column + trailing actions column. */
+export const GRID_TEMPLATE =
+  `${SELECT_WIDTH} ` + COLUMNS.map((c) => c.width).join(" ") + ` ${ACTIONS_WIDTH}`;
 
 /** Sum of column widths in pixels. Used as min-width on the grid so
  * horizontal overflow scrolls inside the parent container. */
-export const TOTAL_GRID_WIDTH = [...COLUMNS.map((c) => c.width), ACTIONS_WIDTH]
+export const TOTAL_GRID_WIDTH = [SELECT_WIDTH, ...COLUMNS.map((c) => c.width), ACTIONS_WIDTH]
   .map((w) => parseInt(w.replace("px", ""), 10) || 0)
   .reduce((a, b) => a + b, 0);

@@ -442,6 +442,61 @@ async def delete_property(property_id: int, db: AsyncSession = Depends(get_db)):
             "sheet_deleted": sheet_deleted, "kvk_removed": kvk_removed}
 
 
+class BulkDeleteIn(BaseModel):
+    ids: List[int]
+
+
+@router.post("/bulk-delete")
+async def bulk_delete_properties(payload: BulkDeleteIn, db: AsyncSession = Depends(get_db)):
+    """Delete many properties at once from Sheet + DB + KVK storage."""
+    ids = list(dict.fromkeys(payload.ids))  # de-dup, preserve order
+    if not ids:
+        return {"deleted": 0, "sheet_deleted": 0, "kvk_removed": 0}
+
+    r = await db.execute(select(Property).where(Property.id.in_(ids)))
+    objs = r.scalars().all()
+    urls = [o.url for o in objs if o.url]
+
+    sheet_deleted = 0
+    kvk_removed = 0
+    if urls:
+        import asyncio
+
+        def _bulk_sheet_kvk():
+            import re as _re
+            import sys
+            from pathlib import Path
+            root = Path(__file__).resolve().parents[3]
+            if str(root) not in sys.path:
+                sys.path.insert(0, str(root))
+            from funda.src.modules import SheetsWriter
+            from funda.src.modules.kvk_storage import get_kvk_storage
+            sd = SheetsWriter().delete_rows_by_urls(urls)
+            ks = get_kvk_storage()
+            kr = 0
+            for u in urls:
+                m = _re.search(r"/(\d{7,10})/?(?:\?|$)", u)
+                fid = m.group(1) if m else None
+                if fid and ks.remove(fid):
+                    kr += 1
+            return sd, kr
+
+        try:
+            sheet_deleted, kvk_removed = await asyncio.wait_for(
+                asyncio.to_thread(_bulk_sheet_kvk), timeout=180
+            )
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Bulk sheet/KVK delete failed: {e}")
+
+    deleted = 0
+    for o in objs:
+        await db.delete(o)
+        deleted += 1
+    await db.commit()
+    return {"deleted": deleted, "sheet_deleted": sheet_deleted, "kvk_removed": kvk_removed}
+
+
 @router.post("/sync", response_model=SyncResponse)
 async def sync_from_sheet(db: AsyncSession = Depends(get_db)):
     """Pull every row from the Google Sheet into the DB. Idempotent on URL."""

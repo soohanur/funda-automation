@@ -34,6 +34,10 @@ type PropertiesTableProps = {
   onSort?: (key: string) => void;
   onEmail?: (row: PropertiesTableRow) => void;
   onDelete?: (row: PropertiesTableRow) => void;
+  selectedIds?: Set<number>;
+  onToggleSelect?: (id: number) => void;
+  onToggleAll?: () => void;
+  allSelected?: boolean;
   showBiddingEdit?: boolean;
   /** Outer card classes. */
   className?: string;
@@ -101,6 +105,10 @@ function DesktopTable({
   onSort,
   onEmail,
   onDelete,
+  selectedIds,
+  onToggleSelect,
+  onToggleAll,
+  allSelected,
   showBiddingEdit = true,
   onLoadMore,
   hasMore,
@@ -133,7 +141,13 @@ function DesktopTable({
   return (
     <div className="card flex min-h-0 flex-col overflow-hidden">
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
-        <Header sort={sort} order={order} onSort={onSort} />
+        <Header
+          sort={sort}
+          order={order}
+          onSort={onSort}
+          allSelected={allSelected}
+          onToggleAll={onToggleAll}
+        />
 
         {items.length === 0 && !isLoading ? (
           <div className="p-10 text-center text-sm text-[var(--muted-foreground)]">
@@ -156,6 +170,8 @@ function DesktopTable({
                   rowIndex={vi.index}
                   onEmail={onEmail ? handleEmail : undefined}
                   onDelete={onDelete}
+                  selected={selectedIds?.has(p.id)}
+                  onToggleSelect={onToggleSelect}
                   onOpenImages={onOpenImages}
                   onOpenCellModal={onOpenCellModal}
                   showBiddingEdit={showBiddingEdit}
@@ -205,6 +221,10 @@ function MobileTable({
   onSort,
   onEmail,
   onDelete,
+  selectedIds,
+  onToggleSelect,
+  onToggleAll,
+  allSelected,
   showBiddingEdit = true,
   onLoadMore,
   hasMore,
@@ -240,7 +260,13 @@ function MobileTable({
   return (
     <div className="card overflow-hidden">
       <div className="overflow-x-auto">
-        <Header sort={sort} order={order} onSort={onSort} />
+        <Header
+          sort={sort}
+          order={order}
+          onSort={onSort}
+          allSelected={allSelected}
+          onToggleAll={onToggleAll}
+        />
 
         {items.length === 0 && !isLoading ? (
           <div className="p-10 text-center text-sm text-[var(--muted-foreground)]">
@@ -255,6 +281,8 @@ function MobileTable({
                 rowIndex={idx}
                 onEmail={onEmail ? handleEmail : undefined}
                 onDelete={onDelete}
+                selected={selectedIds?.has(p.id)}
+                onToggleSelect={onToggleSelect}
                 onOpenImages={onOpenImages}
                 onOpenCellModal={onOpenCellModal}
                 showBiddingEdit={showBiddingEdit}
@@ -289,16 +317,31 @@ function Header({
   sort,
   order,
   onSort,
+  allSelected,
+  onToggleAll,
 }: {
   sort?: string;
   order?: "asc" | "desc";
   onSort?: (key: string) => void;
+  allSelected?: boolean;
+  onToggleAll?: () => void;
 }) {
   return (
     <div
       className="sticky top-0 z-20 grid border-b border-[var(--border)] bg-[var(--surface)] text-[11px] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]"
       style={{ gridTemplateColumns: GRID_TEMPLATE, minWidth: TOTAL_GRID_WIDTH }}
     >
+      <div className="grid place-items-center px-2 py-3">
+        {onToggleAll && (
+          <input
+            type="checkbox"
+            checked={!!allSelected}
+            onChange={onToggleAll}
+            className="h-4 w-4 cursor-pointer accent-[var(--color-brand-600)]"
+            aria-label="Select all"
+          />
+        )}
+      </div>
       {COLUMNS.map((c) => (
         <div key={c.key as string} className="px-3 py-3">
           {c.sortable && onSort ? (

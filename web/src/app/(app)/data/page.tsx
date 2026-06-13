@@ -59,6 +59,8 @@ export default function DataPage() {
   const [searchInput, setSearchInput] = useState("");
   const [emailProperty, setEmailProperty] = useState<Property | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Property | null>(null);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [confirmBulk, setConfirmBulk] = useState(false);
 
   // DOM custom-range inputs — live behind the "Custom" preset so we
   // don't push a request on every keystroke until the user explicitly
@@ -148,6 +150,14 @@ export default function DataPage() {
   }, [data]);
   const total = data?.pages[0]?.total ?? 0;
 
+  const allSelected = items.length > 0 && items.every((p) => selected.has(p.id));
+  const toggleAll = () =>
+    setSelected((prev) =>
+      items.length > 0 && items.every((p) => prev.has(p.id))
+        ? new Set()
+        : new Set(items.map((p) => p.id)),
+    );
+
   const syncM = useMutation({
     mutationFn: propertiesApi.sync,
     onSuccess: (r) => {
@@ -170,6 +180,26 @@ export default function DataPage() {
     },
     onError: () => toast.error("Delete failed — check backend logs"),
   });
+
+  const bulkDeleteM = useMutation({
+    mutationFn: (ids: number[]) => propertiesApi.bulkRemove(ids),
+    onSuccess: (r) => {
+      toast.success(`Deleted ${r.deleted} properties (sheet ${r.sheet_deleted}, KVK ${r.kvk_removed}).`);
+      setSelected(new Set());
+      setConfirmBulk(false);
+      qc.invalidateQueries({ queryKey: ["properties"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+    onError: () => toast.error("Bulk delete failed — check backend logs"),
+  });
+
+  const toggleSelect = (id: number) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   const onSort = (key: string) => {
     setFilters((f) => {
@@ -285,12 +315,62 @@ export default function DataPage() {
         onSort={onSort}
         onEmail={(p) => setEmailProperty(p as Property)}
         onDelete={(p) => setConfirmDelete(p as Property)}
+        selectedIds={selected}
+        onToggleSelect={toggleSelect}
+        onToggleAll={toggleAll}
+        allSelected={allSelected}
         onLoadMore={() => {
           if (hasNextPage && !isFetchingNextPage) fetchNextPage();
         }}
         hasMore={!!hasNextPage}
         isLoadingMore={isFetchingNextPage}
       />
+
+      {/* Bulk action bar — floats when rows are selected. */}
+      {selected.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-2.5 shadow-lg">
+          <span className="text-sm font-medium">{selected.size} selected</span>
+          <button type="button" className="btn-ghost text-xs" onClick={() => setSelected(new Set())}>
+            Clear
+          </button>
+          <button
+            type="button"
+            onClick={() => setConfirmBulk(true)}
+            className="inline-flex items-center gap-1.5 rounded-md bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700"
+          >
+            Delete selected ({selected.size})
+          </button>
+        </div>
+      )}
+
+      {confirmBulk && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4">
+          <div className="card w-full max-w-md p-5">
+            <h3 className="text-base font-semibold">Delete {selected.size} properties?</h3>
+            <p className="mt-2 text-xs text-[var(--muted-foreground)]">
+              This permanently removes {selected.size} rows from <b>the Google Sheet, the database, and KVK storage</b> (they won&apos;t be re-scraped). This cannot be undone.
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={() => setConfirmBulk(false)}
+                disabled={bulkDeleteM.isPending}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => bulkDeleteM.mutate([...selected])}
+                disabled={bulkDeleteM.isPending}
+                className="inline-flex items-center gap-2 rounded-md bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
+              >
+                {bulkDeleteM.isPending ? "Deleting…" : `Yes, delete ${selected.size}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <EmailModal property={emailProperty} open={!!emailProperty} onClose={() => setEmailProperty(null)} />
 

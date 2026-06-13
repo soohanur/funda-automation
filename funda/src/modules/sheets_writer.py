@@ -624,6 +624,44 @@ class SheetsWriter:
             pass
         return True
 
+    def delete_rows_by_urls(self, urls) -> int:
+        """Delete every sheet row whose URL (col B) is in `urls`, across all
+        tabs. One read + one batched deleteDimension per tab; rows deleted
+        bottom-up so indices stay valid. Returns count deleted."""
+        self._connect()
+        want = {(u or "").strip() for u in urls if u}
+        if not want:
+            return 0
+        total = 0
+        for ws in self._spreadsheet.worksheets():
+            try:
+                col_b = ws.col_values(2)
+            except Exception:
+                continue
+            rownums = [i for i, v in enumerate(col_b, start=1)
+                       if i > 1 and (v or "").strip() in want]
+            if not rownums:
+                continue
+            reqs = [{
+                "deleteDimension": {
+                    "range": {"sheetId": ws.id, "dimension": "ROWS",
+                              "startIndex": r - 1, "endIndex": r}
+                }
+            } for r in sorted(rownums, reverse=True)]
+            try:
+                self._spreadsheet.batch_update({"requests": reqs})
+                total += len(rownums)
+            except Exception as e:
+                logger.warning(f"  bulk delete on {ws.title} failed: {e}")
+        # Row numbers shifted everywhere — drop the row caches wholesale.
+        try:
+            with self._url_to_row_lock:
+                self._url_to_row.clear()
+            self._tab_urls.clear()
+        except Exception:
+            pass
+        return total
+
     def list_pending_valuations(self) -> List[dict]:
         """Return rows where Walter Play-it-Safe (col AF) is empty.
         Each item: {tab, row, url, address, asking_price, days_on_market}.
